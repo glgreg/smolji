@@ -9,7 +9,7 @@ Aplicação web single-page hospedada sobre Next.js App Router. Como o editor de
 - **Language / Runtime**: TypeScript 5 em Node.js / Browser (ES2017+)
 - **Frameworks**: Next.js 16.2.10 (App Router), React 19.2.4, Tailwind CSS v4 (`@tailwindcss/postcss`)
 - **Libraries**: `gemoji` (catálogo e shortcodes de emojis), `jszip` (exportação de pacotes ZIP), `lucide-react` (ícones)
-- **Testing & Quality**: Vitest 4 com `jsdom`, `@testing-library/react`, `@vitest/coverage-v8`, ESLint 9 e `scripts/remove-ignores.js`
+- **Testing & Quality**: Vitest 4 com `jsdom`, `@testing-library/react` e `@vitest/coverage-v8` para testes unitários/integração (`__tests__/`), Playwright (`@playwright/test`) para testes E2E (`e2e/`), ESLint 9 (`eslint-config-next/typescript` em TS/TSX e `eslint-plugin-jsdoc` + `tsc --checkJs` em JS), `scripts/remove-ignores.js` e GitHub Actions CI (`.github/workflows/ci.yml`).
 
 ## 3. Structure and Patterns
 
@@ -18,8 +18,10 @@ Aplicação web single-page hospedada sobre Next.js App Router. Como o editor de
   - `src/App.tsx`: Estúdio interativo de composição (estado de camadas, viewport com pan/zoom, pipeline de renderização Canvas 2D, atalhos de teclado, exportação e modais).
   - `src/types.ts`: Contratos TypeScript compartilhados (`Layer`, `UploadedHistory`, `ContextMenuState`, `DragState`).
   - `src/utils/emoji.ts`: Catálogo de estilos/gradientes, extração de grafemas (`Intl.Segmenter`), resolução de URLs de CDN e clientes de upload (ImgBB/Imgur).
-  - `__tests__/`: Testes unitários e de componente (`App.test.tsx`, `emoji.test.ts`).
+  - `__tests__/`: Testes unitários e de integração (`App.test.tsx`, `app-shell.test.tsx`, `emoji.test.ts`, `remove-ignores.test.ts`).
+  - `e2e/`: Testes end-to-end com Playwright (`studio.spec.ts`).
   - `scripts/remove-ignores.js`: Script executado antes dos testes para remover diretivas de supressão (`@ts-ignore`, `@ts-nocheck`, `eslint-disable`) de `src/`.
+  - `.github/workflows/ci.yml`: Pipeline de CI do GitHub Actions executado em cada PR e push para `develop`/`main`.
 - **Data flow**:
   1. Entrada de texto ou seleção na biblioteca extrai emojis via `parseEmojis` / `gemoji` e adiciona camadas (`Layer`) ao estado do `App`.
   2. O loop reativo (`useEffect` -> `drawEditorCanvas` -> `render2D`) desenha o artboard lógico de `512x512` escalado pelo zoom/pan no canvas principal, buscando e cacheando imagens da CDN em `imageCache`.

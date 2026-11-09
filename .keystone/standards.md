@@ -19,13 +19,15 @@
 
 - **Naming**: `camelCase` para variáveis e funções, `PascalCase` para componentes React e interfaces/types (`Layer`, `DragState`), `UPPER_SNAKE_CASE` para constantes de catálogo (`EMOJI_STYLES`, `GRADIENTS`, `POPULAR_EMOJIS`).
 - **Proibição de supressões**: Nunca utilizar `@ts-ignore`, `@ts-nocheck` ou `eslint-disable` em `src/`; o script `scripts/remove-ignores.js` apaga essas diretivas automaticamente no pipeline de teste.
-- **Formatting & Linting**: Validado via `npx tsc --noEmit` e `npm run lint` (ESLint 9).
+- **Formatting & Linting**:
+  - Arquivos TypeScript (`.ts`, `.tsx`): validados via `npx tsc --noEmit` e `npm run lint:ts` (ESLint 9 com `eslint-config-next/core-web-vitals` e `eslint-config-next/typescript`).
+  - Arquivos JavaScript (`.js`): validados via JSDoc com `npm run lint:js` (`eslint-plugin-jsdoc` + `tsc --allowJs --checkJs --noEmit`).
 
 ## 3. Testing
 
-- **Runner**: Vitest com ambiente `jsdom` e `@testing-library/react`.
-- **Pipeline de verificação**: Sempre validar alterações executando `npm test` (`node scripts/remove-ignores.js && npx tsc --noEmit && npm run lint && vitest run --coverage`).
-- Funções utilitárias puras (como parsing de emojis e geração de URLs) possuem testes unitários dedicados em `__tests__/emoji.test.ts`; fluxos de UI ficam em `__tests__/App.test.tsx`.
+- **Unit & Integration Tests**: Vitest com ambiente `jsdom` e `@testing-library/react` em `__tests__/` (`npm run test:unit`).
+- **E2E Tests**: Playwright (`@playwright/test`) em `e2e/` (`npm run test:e2e`), exercitando o estúdio completo sobre o servidor Next.js.
+- **Pipeline de verificação e CI**: `npm test` (`node scripts/remove-ignores.js && npx tsc --noEmit && npm run lint && npm run test:unit`) e `npm run test:e2e` rodam automaticamente no GitHub Actions (`.github/workflows/ci.yml`) a cada Pull Request.
 
 ## 4. Documentation
 
