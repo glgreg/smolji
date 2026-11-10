@@ -78,6 +78,8 @@ export function getEmojiUrl(emoji: string, style: string) {
   return `https://emoji-cdn.mqrio.dev/${encodeURIComponent(emoji)}?style=${style}`;
 }
 
+let cachedSegmenter: Intl.Segmenter | null = null;
+
 /**
  * Parses text to extract all valid emoji grapheme clusters.
  * @param {string} text - The input text containing emojis
@@ -88,8 +90,10 @@ export function parseEmojis(text: string) {
   
   // Use Intl.Segmenter to accurately extract grapheme clusters (essential for ZWJ sequences)
   if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-    const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
-    const segments = Array.from(segmenter.segment(text)).map(s => s.segment);
+    if (!cachedSegmenter) {
+      cachedSegmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+    }
+    const segments = Array.from(cachedSegmenter.segment(text)).map(s => s.segment);
     
     // Emoji regex checking both standard emojis and extended pictographics (like ZWJ and modifiers)
     const emojiRegex = /[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u;
@@ -183,10 +187,16 @@ export async function uploadToImgur(image: Blob | string, clientId: string) {
  * @param {Blob} blob 
  * @returns {Promise<string>}
  */
-function blobToBase64(blob: Blob) {
+function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to read blob as Base64 string'));
+      }
+    };
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
