@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-**Smolji** (interface intitulada **MojiSnap Studio**) é um estúdio web interativo para converter, combinar e customizar emojis em stickers PNG de alta resolução com suporte a múltiplas camadas, fundos (transparente, sólido, gradiente), sombras, exportação em lote (ZIP com todos os estilos) e upload direto para provedores de imagem (ImgBB e Imgur). O valor central a preservar é a composição visual rápida, inteiramente client-side, sem necessidade de backend próprio.
+**Smolji** (**Smolji Studio**) é um estúdio web interativo para converter, combinar e customizar emojis em stickers PNG de alta resolução com suporte a múltiplas camadas, fundos (transparente, sólido, gradiente), sombras, exportação em lote (ZIP com todos os estilos) e upload direto para provedores de imagem (ImgBB e Imgur). O valor central a preservar é a composição visual rápida, inteiramente client-side, sem necessidade de backend próprio.
 
 ## 2. Project Type
 

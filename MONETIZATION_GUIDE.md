@@ -1,6 +1,6 @@
-# Configuration & Monetization Guide with Google AdSense on MojiSnap
+# Configuration & Monetization Guide with Google AdSense on Smolji
 
-This guide provides a practical step-by-step approach to configuring ads on **MojiSnap**, maximizing your project's profits, and successfully passing the Google AdSense review.
+This guide provides a practical step-by-step approach to configuring ads on **Smolji**, maximizing your project's profits, and successfully passing the Google AdSense review.
 
 ---
 
@@ -10,7 +10,7 @@ Google AdSense displays contextual ads (text, image, or video banners) on your s
 1.  **CPC (Cost Per Click):** When a user clicks on an ad.
 2.  **RPM (Revenue Per Mille):** Based on how many times ads were viewed.
 
-For niche online utility tools like MojiSnap, traffic is highly focused on designers, bot developers, Discord/Twitch streamers, and social media enthusiasts. This is a high-value audience for advertisers in technology, hosting, SaaS, and creative software.
+For niche online utility tools like Smolji, traffic is highly focused on designers, bot developers, Discord/Twitch streamers, and social media enthusiasts. This is a high-value audience for advertisers in technology, hosting, SaaS, and creative software.
 
 ---
 
@@ -30,7 +30,7 @@ Google rejects websites that appear incomplete or created solely to display ads.
 
 ### Step 1: Create the Account
 1.  Access [google.com/adsense](https://www.google.com/adsense/start/).
-2.  Sign up using your Google account and enter your site URL (e.g., `https://mojisnap.com`).
+2.  Sign up using your Google account and enter your site URL (e.g., `https://smolji.com`).
 3.  Fill in your payment info and physical address to receive the verification PIN.
 
 ### Step 2: Insert the Verification Script
@@ -71,9 +71,9 @@ Replace the visual ad placeholders `<div className="bg-zinc-100/50 ...">` in the
 
 ---
 
-## 4. Strategies to Maximize Earnings with MojiSnap
+## 4. Strategies to Maximize Earnings with Smolji
 
-To turn MojiSnap into a successful, passive income source, follow these traction and optimization guidelines:
+To turn Smolji into a successful, passive income source, follow these traction and optimization guidelines:
 
 ### A. Search Engine Optimization (SEO)
 The majority of your audience will come from Google searches for terms like:
@@ -85,7 +85,7 @@ The majority of your audience will come from Google searches for terms like:
 Our `index.html`, `robots.txt`, and `sitemap.xml` are already optimized. To expand, write short blog articles or tutorial cards explaining how to perform tasks (e.g., *"How to Upload Custom Emojis to Slack"*). This generates domain authority very fast.
 
 ### B. Promote in Communities
-*   **Discord:** Share the tool in bot developer communities, design resources, and emoji servers. Discord bots require public image URLs for embed widgets and avatares. MojiSnap is perfect for these developers due to link history and Imgur/ImgBB integrations.
+*   **Discord:** Share the tool in bot developer communities, design resources, and emoji servers. Discord bots require public image URLs for embed widgets and avatares. Smolji is perfect for these developers due to link history and Imgur/ImgBB integrations.
 *   **Reddit:** Share on subreddits like `r/discordapp`, `r/slack`, `r/design`, and `r/webdev` as a free, open-source graphic composition utility.
 *   **GitHub:** Keep the source code open on GitHub. This builds developer trust, organic high-quality backlinks, and search engine ranking.
 

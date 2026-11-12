@@ -6,14 +6,14 @@ import Page from '../src/app/page';
 
 vi.mock('next/dynamic', () => ({
   default: () => {
-    const MockDynamicApp = () => <div data-testid="dynamic-studio-app">MojiSnap Studio Mounted</div>;
+    const MockDynamicApp = () => <div data-testid="dynamic-studio-app">Smolji Studio Mounted</div>;
     return MockDynamicApp;
   },
 }));
 
 describe('App Shell (layout.tsx & page.tsx)', () => {
-  it('exports SEO metadata for MojiSnap', () => {
-    expect(metadata.title).toContain('MojiSnap');
+  it('exports SEO metadata for Smolji', () => {
+    expect(metadata.title).toContain('Smolji');
     expect(metadata.description).toContain('PNG stickers');
   });
 
