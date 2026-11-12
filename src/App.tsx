@@ -26,9 +26,12 @@ import {
   Undo2,
   Redo2,
   FlipHorizontal,
-  FlipVertical
+  FlipVertical,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import JSZip from 'jszip';
+import { StudioSelect, StudioSlider, StudioColorPicker } from './components/StudioControls';
 import { 
   EMOJI_STYLES, 
   GRADIENTS, 
@@ -96,7 +99,7 @@ export default function App() {
   // Theme state
   const [theme, setTheme] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('mojisnap_theme') || 'dark';
+      return localStorage.getItem('smolji_theme') || 'dark';
     }
     return 'dark';
   });
@@ -175,6 +178,8 @@ export default function App() {
   // Settings & Upload states
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [apiKeys, setApiKeys] = useState({ imgbb: '', imgur: '' });
+  const [showImgbbKey, setShowImgbbKey] = useState(false);
+  const [showImgurId, setShowImgurId] = useState(false);
   const [uploadHistory, setUploadHistory] = useState<UploadedHistory[]>([]);
   const [isUploading, setIsUploading] = useState<string | null>('');
   const [uploadResultUrl, setUploadResultUrl] = useState('');
@@ -239,7 +244,7 @@ export default function App() {
       root.classList.add('dark');
     }
     try {
-      localStorage.setItem('mojisnap_theme', theme);
+      localStorage.setItem('smolji_theme', theme);
     } catch {
       // storage unavailable
     }
@@ -1373,7 +1378,7 @@ export default function App() {
     const dataUrl = exportCanvas.toDataURL('image/png');
     const link = document.createElement('a');
     const firstEmoji = layers[0]?.emoji || 'sticker';
-    link.download = `mojisnap_${firstEmoji}_sticker_${exportSize}px.png`;
+    link.download = `smolji_${firstEmoji}_sticker_${exportSize}px.png`;
     link.href = dataUrl;
     link.click();
     showToast('PNG saved!');
@@ -1458,7 +1463,7 @@ export default function App() {
   const handleDownloadZip = async () => {
     setIsZipping(true);
     const zip = new JSZip();
-    const folder = zip.folder(`mojisnap_pack`);
+    const folder = zip.folder(`smolji_pack`);
     
     showToast('Compiling ZIP for all emoji styles...');
     
@@ -1558,7 +1563,7 @@ export default function App() {
       const blobUrl = URL.createObjectURL(content);
       const link = document.createElement('a');
       link.href = blobUrl;
-      link.download = `mojisnap_sticker_pack.zip`;
+      link.download = `smolji_sticker_pack.zip`;
       link.click();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
       showToast('ZIP folder downloaded!');
@@ -1697,59 +1702,64 @@ export default function App() {
       <header className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between gap-4 pointer-events-none">
         
         {/* Logo block */}
-        <div className="flex items-center gap-3 bg-white/80 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 px-4 py-3 rounded-2xl shadow-xl pointer-events-auto">
-          <div className="flex items-center gap-2">
-            <img src="/logo.jpg" alt="Logo" className="w-8 h-8 rounded-lg object-cover" />
+        <div className="flex items-center gap-3 bg-white/85 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 px-4 py-2.5 rounded-2xl shadow-xl pointer-events-auto">
+          <div className="flex items-center gap-2.5">
+            <img src="/logo.jpg" alt="Logo" className="w-8 h-8 rounded-xl object-cover ring-1 ring-zinc-200/80 dark:ring-zinc-700/80 shadow-sm" />
             <div>
-              <h1 className="text-sm font-black text-yellow-600 dark:text-yellow-400 leading-none">MojiSnap</h1>
-              <p className="text-[8px] text-zinc-500 uppercase tracking-widest mt-0.5 font-bold">Studio</p>
+              <h1 className="text-sm font-black tracking-tight text-yellow-600 dark:text-yellow-400 leading-none">Smolji</h1>
+              <p className="text-[9px] text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-0.5 font-bold">Studio</p>
             </div>
           </div>
         </div>
 
         {/* Center zoom & history controls */}
-        <div className="flex items-center gap-1.5 bg-white/80 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 p-1.5 rounded-2xl shadow-xl pointer-events-auto">
+        <div className="flex items-center gap-1.5 bg-white/85 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 p-1.5 rounded-2xl shadow-xl pointer-events-auto">
           <button
+            type="button"
             onClick={handleUndo}
             disabled={undoStack.length === 0}
-            className="p-1.5 hover:bg-zinc-150 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30"
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30 cursor-pointer transition-colors"
             title="Undo (Ctrl+Z)"
           >
             <Undo2 className="w-3.5 h-3.5" />
           </button>
           <button
+            type="button"
             onClick={handleRedo}
             disabled={redoStack.length === 0}
-            className="p-1.5 hover:bg-zinc-150 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30"
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30 cursor-pointer transition-colors"
             title="Redo (Ctrl+Y)"
           >
             <Redo2 className="w-3.5 h-3.5" />
           </button>
-          <span className="w-px h-3.5 bg-zinc-200 dark:border-zinc-800 mx-0.5" />
+          <span className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-800 mx-0.5" />
           <button
+            type="button"
             onClick={() => setCanvasZoom(prev => Math.max(prev - 0.15, 0.25))}
-            className="p-1.5 hover:bg-zinc-150 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-colors"
             title="Zoom Out"
           >
             <Minus className="w-3.5 h-3.5" />
           </button>
-          <span className="text-[10px] font-mono text-zinc-700 dark:text-zinc-300 px-1 text-center min-w-10">
+          <span className="text-[11px] font-mono font-medium text-zinc-700 dark:text-zinc-300 px-1.5 text-center min-w-11 tabular-nums">
             {Math.round(canvasZoom * 100)}%
           </span>
           <button
+            type="button"
             onClick={() => setCanvasZoom(prev => Math.min(prev + 0.15, 6.0))}
-            className="p-1.5 hover:bg-zinc-150 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-colors"
             title="Zoom In"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
           <button
+            type="button"
             onClick={() => {
               setPanX(0);
               setPanY(0);
               setCanvasZoom(0.85);
             }}
-            className="p-1.5 hover:bg-zinc-150 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border-l border-zinc-200 dark:border-zinc-800 pl-2 ml-0.5"
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border-l border-zinc-200 dark:border-zinc-800 pl-2 ml-0.5 cursor-pointer transition-colors"
             title="Recenter view"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -1757,10 +1767,11 @@ export default function App() {
         </div>
 
         {/* Right action controls */}
-        <div className="flex items-center gap-2 bg-white/80 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 p-1.5 rounded-2xl shadow-xl pointer-events-auto">
+        <div className="flex items-center gap-2 bg-white/85 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 p-1.5 rounded-2xl shadow-xl pointer-events-auto">
           <button
+            type="button"
             onClick={() => setLeftPanelOpen(prev => !prev)}
-            className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
               leftPanelOpen 
                 ? 'border-yellow-500/25 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' 
                 : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
@@ -1768,12 +1779,13 @@ export default function App() {
             title="Toggle Asset Library Panel"
           >
             <Smile className="w-4 h-4" />
-            <span className="hidden lg:inline text-[10px]">Library</span>
+            <span className="hidden lg:inline text-[11px]">Library</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setRightPanelOpen(prev => !prev)}
-            className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
               rightPanelOpen 
                 ? 'border-yellow-500/25 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' 
                 : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
@@ -1781,37 +1793,41 @@ export default function App() {
             title="Toggle Layer Properties Panel"
           >
             <Layers className="w-4 h-4" />
-            <span className="hidden lg:inline text-[10px]">Properties</span>
+            <span className="hidden lg:inline text-[11px]">Properties</span>
           </button>
 
           <button
+            type="button"
             onClick={handleCopyToClipboard}
-            className="p-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white rounded-xl text-xs font-bold transition-all border border-zinc-200 dark:border-zinc-800 flex items-center gap-1"
+            className="p-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white rounded-xl text-xs font-bold transition-all border border-zinc-200 dark:border-zinc-800 flex items-center gap-1 cursor-pointer"
             title="Copy PNG sticker image to clipboard"
           >
             <Copy className="w-4 h-4" />
           </button>
           
           <button
+            type="button"
             onClick={handleDownloadPNG}
-            className="px-3 py-2 bg-yellow-500 hover:bg-yellow-400 text-zinc-950 rounded-xl text-xs font-black transition-all flex items-center gap-1 shadow-md"
+            className="px-3.5 py-2 bg-yellow-500 hover:bg-yellow-400 text-zinc-950 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
             title="Download PNG sticker file"
           >
             <Download className="w-4 h-4" />
-            <span className="hidden sm:inline text-[10px]">Save PNG</span>
+            <span className="hidden sm:inline text-[11px]">Save PNG</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-            className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-150 dark:hover:bg-zinc-800 transition-colors"
+            className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             title="Toggle theme"
           >
             {theme === 'dark' ? <Sun className="w-4 h-4 text-yellow-400" /> : <Moon className="w-4 h-4 text-zinc-700" />}
           </button>
 
           <button
+            type="button"
             onClick={() => setSettingsOpen(true)}
-            className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-150 dark:hover:bg-zinc-800 transition-colors"
+            className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             title="Settings"
           >
             <Settings className="w-4 h-4" />
@@ -1826,22 +1842,22 @@ export default function App() {
         }`}
       >
         <div className="w-full h-full bg-white/80 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 rounded-2xl shadow-2xl p-4 flex flex-col gap-4 overflow-y-auto pointer-events-auto">
-          <div className="border-b border-zinc-200 dark:border-zinc-900 pb-3 flex items-center justify-between shrink-0">
-            <h2 className="text-xs font-black uppercase tracking-wider text-yellow-600 dark:text-yellow-400 flex items-center gap-2">
+          <div className="border-b border-zinc-200 dark:border-zinc-900 pb-3 flex items-center justify-between gap-2 shrink-0">
+            <h2 className="text-xs font-black uppercase tracking-wider text-yellow-600 dark:text-yellow-400 flex items-center gap-2 shrink-0">
               <Smile className="w-4 h-4" />
               Studio Assets
             </h2>
-            <div className="flex items-center gap-2">
-              <select
+            <div className="w-36 shrink-0" title="Default Style for new Emojis">
+              <StudioSelect<string>
+                id="default-style"
+                ariaLabel="Default Style for new Emojis"
                 value={selectedStyle}
-                onChange={(e) => setSelectedStyle(e.target.value)}
-                className="text-[9px] bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 px-2 py-0.5 rounded font-bold"
-                title="Default Style for new Emojis"
-              >
-                {EMOJI_STYLES.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
+                options={EMOJI_STYLES.map((s) => ({
+                  value: s.id,
+                  label: s.name,
+                }))}
+                onChange={(val) => setSelectedStyle(val)}
+              />
             </div>
           </div>
 
@@ -2035,103 +2051,78 @@ export default function App() {
               </div>
               
               {/* Visual Style Selection */}
-              <div className="space-y-1">
-                <label htmlFor="layer-style" className="block text-[8px] text-zinc-500 dark:text-zinc-400 font-semibold uppercase tracking-wider">Visual Style</label>
-                <select
+              <div className="space-y-1.5">
+                <label htmlFor="layer-style" className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-semibold uppercase tracking-wider">Visual Style</label>
+                <StudioSelect
                   id="layer-style"
+                  ariaLabel="Visual Style"
                   value={activeLayer.style || selectedStyle}
-                  onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, style: e.target.value } : l))}
-                  className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200 text-xs px-2.5 py-1.5 focus:border-yellow-500 focus:outline-none"
-                >
-                  {EMOJI_STYLES.map(s => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.format})</option>
-                  ))}
-                </select>
+                  options={EMOJI_STYLES.map(s => ({
+                    value: s.id,
+                    label: s.name,
+                    badge: s.format,
+                  }))}
+                  onChange={(styleId) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, style: styleId } : l))}
+                />
               </div>
 
               {/* Sliders grid */}
-              <div className="grid grid-cols-2 gap-3 text-[10px]">
-                {/* Scale */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Scale</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{Math.round(activeLayer.scale * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="2.5"
-                    step="0.05"
-                    value={activeLayer.scale}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, scale: parseFloat(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+                <StudioSlider
+                  label="Scale"
+                  valueDisplay={`${Math.round(activeLayer.scale * 100)}%`}
+                  min={0.1}
+                  max={2.5}
+                  step={0.05}
+                  value={activeLayer.scale}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, scale: val } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, scale: 0.85 } : l))}
+                />
 
-                {/* Rotation */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Rotation</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{activeLayer.rotation}°</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-180"
-                    max="180"
-                    value={activeLayer.rotation}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, rotation: parseInt(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+                <StudioSlider
+                  label="Rotation"
+                  valueDisplay={`${activeLayer.rotation}°`}
+                  min={-180}
+                  max={180}
+                  step={1}
+                  value={activeLayer.rotation}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, rotation: Math.round(val) } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, rotation: 0 } : l))}
+                />
 
-                {/* Skew X */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Skew X</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{activeLayer.skewX || 0}°</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-45"
-                    max="45"
-                    value={activeLayer.skewX || 0}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewX: parseInt(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+                <StudioSlider
+                  label="Skew X"
+                  valueDisplay={`${activeLayer.skewX || 0}°`}
+                  min={-45}
+                  max={45}
+                  step={1}
+                  value={activeLayer.skewX || 0}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewX: Math.round(val) } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewX: 0 } : l))}
+                />
 
-                {/* Skew Y */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Skew Y</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{activeLayer.skewY || 0}°</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-45"
-                    max="45"
-                    value={activeLayer.skewY || 0}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewY: parseInt(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+                <StudioSlider
+                  label="Skew Y"
+                  valueDisplay={`${activeLayer.skewY || 0}°`}
+                  min={-45}
+                  max={45}
+                  step={1}
+                  value={activeLayer.skewY || 0}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewY: Math.round(val) } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewY: 0 } : l))}
+                />
 
-                {/* Opacity */}
-                <div className="space-y-1 col-span-2">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Opacity</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{Math.round((activeLayer.opacity !== undefined ? activeLayer.opacity : 1) * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={activeLayer.opacity !== undefined ? activeLayer.opacity : 1}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, opacity: parseFloat(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+                <StudioSlider
+                  label="Opacity"
+                  valueDisplay={`${Math.round((activeLayer.opacity !== undefined ? activeLayer.opacity : 1) * 100)}%`}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={activeLayer.opacity !== undefined ? activeLayer.opacity : 1}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, opacity: val } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, opacity: 1 } : l))}
+                  className="col-span-2"
+                />
               </div>
 
               {/* Style Explorer variations for selected layer */}
@@ -2200,15 +2191,11 @@ export default function App() {
             </div>
 
             {bgType === 'solid' && (
-              <div className="flex items-center justify-between p-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
-                <span className="text-[10px] text-zinc-500 dark:text-zinc-400">Solid Color</span>
-                <input
-                  type="color"
-                  value={solidBg}
-                  onChange={(e) => setSolidBg(e.target.value)}
-                  className="w-7 h-5 rounded bg-transparent cursor-pointer border border-zinc-300 dark:border-zinc-700"
-                />
-              </div>
+              <StudioColorPicker
+                label="Solid Color"
+                value={solidBg}
+                onChange={setSolidBg}
+              />
             )}
 
             {bgType === 'gradient' && (
@@ -2216,8 +2203,9 @@ export default function App() {
                 {GRADIENTS.slice(1).map((grad, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => setSelectedGradient(grad)}
-                    className={`h-5 rounded border transition-all ${selectedGradient.name === grad.name ? 'border-yellow-500 scale-105' : 'border-transparent'} ${grad.preview}`}
+                    className={`h-5 rounded border transition-all cursor-pointer ${selectedGradient.name === grad.name ? 'border-yellow-500 scale-105' : 'border-transparent'} ${grad.preview}`}
                     title={grad.name}
                   />
                 ))}
@@ -2225,44 +2213,50 @@ export default function App() {
             )}
 
             {/* Radius and Export Dimensions */}
-            <div className="grid grid-cols-2 gap-3 text-[10px]">
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                  <span>Corners</span>
-                  <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{borderRadius}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={borderRadius}
-                  onChange={(e) => setBorderRadius(parseInt(e.target.value))}
-                  className="w-full accent-yellow-500 h-1 rounded"
-                />
-              </div>
+            <div className="space-y-3">
+              <StudioSlider
+                label="Corners"
+                valueDisplay={`${borderRadius}%`}
+                min={0}
+                max={100}
+                step={1}
+                value={borderRadius}
+                onChange={(val) => setBorderRadius(Math.round(val))}
+                onReset={() => setBorderRadius(25)}
+              />
 
-              <div className="space-y-1">
-                <span className="text-zinc-500 dark:text-zinc-400 block mb-0.5">Export Size</span>
-                <select
-                  value={exportSize}
-                  onChange={(e) => setExportSize(parseInt(e.target.value))}
-                  className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-200 text-[10px] px-2 py-1 focus:outline-none focus:border-yellow-500"
-                >
-                  <option value="128">128 x 128 px</option>
-                  <option value="256">256 x 256 px</option>
-                  <option value="512">512 x 512 px</option>
-                  <option value="1024">1024 x 1024 px</option>
-                </select>
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400 block">Export Size</span>
+                <div className="grid grid-cols-4 gap-1 bg-zinc-100 dark:bg-zinc-900 p-1 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                  {[128, 256, 512, 1024].map((sizeOption) => {
+                    const isActive = exportSize === sizeOption;
+                    return (
+                      <button
+                        key={sizeOption}
+                        type="button"
+                        onClick={() => setExportSize(sizeOption)}
+                        className={`py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer ${
+                          isActive
+                            ? 'bg-yellow-500 text-zinc-950 shadow-sm'
+                            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+                        }`}
+                      >
+                        {sizeOption}px
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
             {/* Shadow Controls */}
-            <div className="space-y-1.5 p-2 rounded-xl bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 text-[10px]">
+            <div className="space-y-2 p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-zinc-500 dark:text-zinc-400">Drop Shadow</span>
+                <span className="text-[11px] font-bold text-zinc-600 dark:text-zinc-300">Drop Shadow</span>
                 <button
+                  type="button"
                   onClick={() => setShadowEnabled(prev => !prev)}
-                  className={`text-[9px] px-2 py-0.5 rounded font-bold transition-colors ${
+                  className={`text-[10px] px-2.5 py-0.5 rounded-lg font-bold transition-colors cursor-pointer ${
                     shadowEnabled 
                       ? 'bg-yellow-500 text-zinc-950' 
                       : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'
@@ -2272,42 +2266,40 @@ export default function App() {
                 </button>
               </div>
               {shadowEnabled && (
-                <div className="grid grid-cols-2 gap-2 pt-1">
+                <div className="space-y-2.5 pt-1">
+                  <StudioSlider
+                    label="Blur"
+                    valueDisplay={`${shadowBlur}px`}
+                    min={0}
+                    max={50}
+                    step={1}
+                    value={shadowBlur}
+                    onChange={(val) => setShadowBlur(Math.round(val))}
+                    onReset={() => setShadowBlur(15)}
+                  />
                   <div>
-                    <div className="flex justify-between text-zinc-400 text-[9px] mb-0.5">
-                      <span>Blur</span>
-                      <span>{shadowBlur}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="50"
-                      value={shadowBlur}
-                      onChange={(e) => setShadowBlur(parseInt(e.target.value))}
-                      className="w-full accent-yellow-500 h-1 rounded"
-                    />
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-zinc-400 text-[9px] mb-0.5">
+                    <div className="flex justify-between text-zinc-500 dark:text-zinc-400 text-[10px] font-medium mb-1">
                       <span>Intensity</span>
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex gap-1.5">
                       <button
+                        type="button"
                         onClick={() => setShadowColor('rgba(0, 0, 0, 0.45)')}
-                        className={`flex-1 py-0.5 rounded border text-[8px] font-bold ${
+                        className={`flex-1 py-1 rounded-lg border text-[10px] font-bold transition-colors cursor-pointer ${
                           shadowColor === 'rgba(0, 0, 0, 0.45)' 
-                            ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400' 
-                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500'
+                            ? 'border-yellow-500 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' 
+                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
                         }`}
                       >
                         Soft
                       </button>
                       <button
+                        type="button"
                         onClick={() => setShadowColor('rgba(0, 0, 0, 0.85)')}
-                        className={`flex-1 py-0.5 rounded border text-[8px] font-bold ${
+                        className={`flex-1 py-1 rounded-lg border text-[10px] font-bold transition-colors cursor-pointer ${
                           shadowColor === 'rgba(0, 0, 0, 0.85)' 
-                            ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400' 
-                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500'
+                            ? 'border-yellow-500 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' 
+                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
                         }`}
                       >
                         Deep
@@ -2415,40 +2407,60 @@ export default function App() {
               </div>
 
               <div>
-                <label htmlFor="settings-imgbb-key" className="block text-[10px] font-bold text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-2">ImgBB API Key</label>
-                <input
-                  id="settings-imgbb-key"
-                  type="password"
-                  value={apiKeys.imgbb}
-                  onChange={(e) => setApiKeys({ ...apiKeys, imgbb: e.target.value })}
-                  className="w-full rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-yellow-500 px-4 py-2.5 text-zinc-800 dark:text-white text-xs"
-                  placeholder="Enter ImgBB API key..."
-                />
+                <label htmlFor="settings-imgbb-key" className="block text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">ImgBB API Key</label>
+                <div className="relative">
+                  <input
+                    id="settings-imgbb-key"
+                    type={showImgbbKey ? 'text' : 'password'}
+                    value={apiKeys.imgbb}
+                    onChange={(e) => setApiKeys({ ...apiKeys, imgbb: e.target.value })}
+                    className="w-full rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-yellow-500 focus:outline-none pl-4 pr-10 py-2.5 text-zinc-800 dark:text-white text-xs"
+                    placeholder="Enter ImgBB API key..."
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowImgbbKey(prev => !prev)}
+                    aria-label={showImgbbKey ? 'Hide ImgBB API Key' : 'Show ImgBB API Key'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 cursor-pointer"
+                  >
+                    {showImgbbKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
-                <label htmlFor="settings-imgur-id" className="block text-[10px] font-bold text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-2">Imgur Client ID</label>
-                <input
-                  id="settings-imgur-id"
-                  type="password"
-                  value={apiKeys.imgur}
-                  onChange={(e) => setApiKeys({ ...apiKeys, imgur: e.target.value })}
-                  className="w-full rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-yellow-500 px-4 py-2.5 text-zinc-800 dark:text-white text-xs"
-                  placeholder="Enter Imgur Client ID..."
-                />
+                <label htmlFor="settings-imgur-id" className="block text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Imgur Client ID</label>
+                <div className="relative">
+                  <input
+                    id="settings-imgur-id"
+                    type={showImgurId ? 'text' : 'password'}
+                    value={apiKeys.imgur}
+                    onChange={(e) => setApiKeys({ ...apiKeys, imgur: e.target.value })}
+                    className="w-full rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-yellow-500 focus:outline-none pl-4 pr-10 py-2.5 text-zinc-800 dark:text-white text-xs"
+                    placeholder="Enter Imgur Client ID..."
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowImgurId(prev => !prev)}
+                    aria-label={showImgurId ? 'Hide Imgur Client ID' : 'Show Imgur Client ID'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 cursor-pointer"
+                  >
+                    {showImgurId ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               {/* Upload History List */}
               {uploadHistory.length > 0 && (
                 <div className="space-y-2 pt-2 border-t border-zinc-200 dark:border-zinc-800">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-400 uppercase tracking-wider">
+                    <span className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                       Recent Uploads ({uploadHistory.length})
                     </span>
                     <button
                       type="button"
                       onClick={handleClearHistory}
-                      className="text-[9px] text-red-500 hover:text-red-400 flex items-center gap-1"
+                      className="text-[10px] text-red-500 hover:text-red-400 flex items-center gap-1 cursor-pointer"
                       title="Clear Upload History"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -2459,7 +2471,7 @@ export default function App() {
                     {uploadHistory.map((item) => (
                       <div
                         key={item.id}
-                        className="flex items-center justify-between p-1.5 bg-white dark:bg-zinc-900 rounded-lg border border-zinc-150 dark:border-zinc-800 text-xs"
+                        className="flex items-center justify-between p-1.5 bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 text-xs"
                       >
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span className="text-sm shrink-0">{item.emoji}</span>
@@ -2548,7 +2560,7 @@ export default function App() {
               </button>
               <button 
                 onClick={() => { if (contextMenu.layerId) deleteLayer(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
-                className="w-full text-left px-3 py-1.5 text-red-500 hover:bg-red-950/10 hover:text-red-400 border-t border-zinc-150 dark:border-zinc-900 mt-1 flex items-center gap-2"
+                className="w-full text-left px-3 py-1.5 text-red-500 hover:bg-red-950/10 hover:text-red-400 border-t border-zinc-200 dark:border-zinc-900 mt-1 flex items-center gap-2"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Delete Layer
               </button>
@@ -2564,7 +2576,7 @@ export default function App() {
               </button>
               <button 
                 onClick={() => { setPanX(0); setPanY(0); setCanvasZoom(0.85); setContextMenu(prev => ({ ...prev, visible: false })); }} 
-                className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white border-t border-zinc-150 dark:border-zinc-900 mt-1 flex items-center gap-2"
+                className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white border-t border-zinc-200 dark:border-zinc-900 mt-1 flex items-center gap-2"
               >
                 <RefreshCw className="w-3.5 h-3.5 text-yellow-500" /> Reset Viewport
               </button>

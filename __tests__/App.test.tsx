@@ -1,6 +1,8 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import App from '../src/App';
 
 function createMock2DContext() {
@@ -44,7 +46,30 @@ function createMock2DContext() {
   };
 }
 
-describe('App Component (MojiSnap Studio)', () => {
+describe('Project Styling & Assets Configuration', () => {
+  it('should configure @tailwindcss/postcss in postcss.config.mjs', () => {
+    const postcssPath = path.resolve(process.cwd(), 'postcss.config.mjs');
+    expect(fs.existsSync(postcssPath)).toBe(true);
+    const content = fs.readFileSync(postcssPath, 'utf8');
+    expect(content).toContain('@tailwindcss/postcss');
+  });
+
+  it('should import tailwindcss and configure class-based dark variant and custom controls in globals.css', () => {
+    const globalsPath = path.resolve(process.cwd(), 'src/app/globals.css');
+    const content = fs.readFileSync(globalsPath, 'utf8');
+    expect(content).toContain('@import "tailwindcss";');
+    expect(content).toContain('@custom-variant dark');
+    expect(content).toContain('.studio-range');
+    expect(content).toContain('::-webkit-scrollbar');
+  });
+
+  it('should include public/logo.jpg asset referenced by the header', () => {
+    const logoPath = path.resolve(process.cwd(), 'public/logo.jpg');
+    expect(fs.existsSync(logoPath)).toBe(true);
+  });
+});
+
+describe('App Component (Smolji Studio)', () => {
   let mockCtx: ReturnType<typeof createMock2DContext>;
 
   beforeEach(() => {
@@ -125,7 +150,7 @@ describe('App Component (MojiSnap Studio)', () => {
   });
 
   it('renders initial studio layout, restores localStorage state, and toggles theme and sidebars', () => {
-    localStorage.setItem('mojisnap_theme', 'light');
+    localStorage.setItem('smolji_theme', 'light');
     localStorage.setItem('emoji_studio_keys', JSON.stringify({ imgbb: 'saved-bb', imgur: 'saved-imgur' }));
     localStorage.setItem(
       'emoji_studio_history',
@@ -133,27 +158,30 @@ describe('App Component (MojiSnap Studio)', () => {
     );
 
     render(<App />);
-    expect(screen.getByText(/MojiSnap/i)).toBeTruthy();
+    expect(screen.getByText(/Smolji/i)).toBeTruthy();
+    expect(screen.queryByText(/mojisnap/i)).toBeNull();
+    expect(document.querySelectorAll('select')).toHaveLength(0);
     expect(document.documentElement.classList.contains('light')).toBe(true);
 
     // Toggle theme to dark
     const themeBtn = screen.getByTitle('Toggle theme');
     fireEvent.click(themeBtn);
     expect(document.documentElement.classList.contains('dark')).toBe(true);
-    expect(localStorage.getItem('mojisnap_theme')).toBe('dark');
+    expect(localStorage.getItem('smolji_theme')).toBe('dark');
 
     // Toggle left & right panels
     fireEvent.click(screen.getByTitle('Toggle Asset Library Panel'));
     fireEvent.click(screen.getByTitle('Toggle Layer Properties Panel'));
 
     // Zoom controls
-    expect(screen.getByText('85%')).toBeTruthy();
+    const zoomControls = within(screen.getByTitle('Zoom In').parentElement as HTMLElement);
+    expect(zoomControls.getByText('85%')).toBeTruthy();
     fireEvent.click(screen.getByTitle('Zoom In'));
-    expect(screen.getAllByText('100%').length).toBeGreaterThanOrEqual(3);
+    expect(zoomControls.getByText('100%')).toBeTruthy();
     fireEvent.click(screen.getByTitle('Zoom Out'));
-    expect(screen.getByText('85%')).toBeTruthy();
+    expect(zoomControls.getByText('85%')).toBeTruthy();
     fireEvent.click(screen.getByTitle('Recenter view'));
-    expect(screen.getByText('85%')).toBeTruthy();
+    expect(zoomControls.getByText('85%')).toBeTruthy();
   });
 
   it('handles malformed JSON in localStorage gracefully without throwing', () => {
@@ -162,7 +190,7 @@ describe('App Component (MojiSnap Studio)', () => {
     const spyError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     render(<App />);
-    expect(screen.getByText(/MojiSnap/i)).toBeTruthy();
+    expect(screen.getByText(/Smolji/i)).toBeTruthy();
     expect(spyError).toHaveBeenCalled();
   });
 
@@ -208,10 +236,12 @@ describe('App Component (MojiSnap Studio)', () => {
     const moveUpButtons = screen.getAllByTitle('Move Up');
     fireEvent.click(moveUpButtons[0]);
 
-    // Update layer style via select dropdown
-    const styleSelect = document.getElementById('layer-style') as HTMLSelectElement;
-    fireEvent.change(styleSelect, { target: { value: 'google' } });
-    expect(styleSelect.value).toBe('google');
+    // Update layer style via custom StudioSelect dropdown
+    const styleSelect = screen.getByRole('combobox', { name: 'Visual Style' });
+    fireEvent.click(styleSelect);
+    const styleListbox = screen.getByRole('listbox');
+    fireEvent.click(within(styleListbox).getByRole('option', { name: /^Google Noto/i }));
+    expect(styleSelect.textContent).toContain('Google Noto');
 
     // Update layer sliders (Scale, Rotation, Skew X, Skew Y, Opacity)
     const ranges = document.querySelectorAll('input[type="range"]');
@@ -358,22 +388,24 @@ describe('App Component (MojiSnap Studio)', () => {
     // Switch to Invisible (transparent) background
     fireEvent.click(screen.getByText('Invisible'));
 
-    // Switch to Solid background and change color picker
+    // Switch to Solid background and update custom StudioColorPicker
     fireEvent.click(screen.getByText('Solid'));
-    const colorInput = document.querySelector('input[type="color"]') as HTMLInputElement;
-    expect(colorInput).toBeTruthy();
-    fireEvent.change(colorInput, { target: { value: '#ff0055' } });
-    expect(colorInput.value).toBe('#ff0055');
+    expect(screen.getByRole('button', { name: 'Open color picker' })).toBeTruthy();
+    const hexInput = screen.getByLabelText('Hex color code') as HTMLInputElement;
+    fireEvent.change(hexInput, { target: { value: '#ff0055' } });
+    expect(hexInput.value.toLowerCase()).toBe('#ff0055');
+    fireEvent.click(screen.getByRole('button', { name: 'Select color #10b981' }));
+    expect(hexInput.value.toLowerCase()).toBe('#10b981');
 
     // Switch back to Gradient and pick Warm Sunset preset
     fireEvent.click(screen.getByText('Gradient'));
     fireEvent.click(screen.getByTitle('Warm Sunset'));
 
-    // Change export size
-    const selects = document.querySelectorAll('select');
-    const exportSelect = selects[selects.length - 1] as HTMLSelectElement;
-    fireEvent.change(exportSelect, { target: { value: '1024' } });
-    expect(exportSelect.value).toBe('1024');
+    // Change export size via custom segmented pills
+    fireEvent.click(screen.getByRole('button', { name: '1024px' }));
+    mockCtx.roundRect.mockClear();
+    fireEvent.click(screen.getByTitle('Download PNG sticker file'));
+    expect(mockCtx.roundRect).toHaveBeenCalledWith(0, 0, 1024, 1024, expect.any(Number));
   });
 
   it('exports PNG, copies to clipboard, downloads ZIP pack, and uploads to ImgBB and Imgur', async () => {
@@ -414,9 +446,12 @@ describe('App Component (MojiSnap Studio)', () => {
     expect(screen.getByText('Please configure ImgBB settings first.')).toBeTruthy();
     expect(screen.getByText('API Settings')).toBeTruthy();
 
-    // Fill in API keys in Settings modal and save
+    // Fill in API keys in Settings modal, toggle visibility, and save
     const imgbbInput = document.getElementById('settings-imgbb-key') as HTMLInputElement;
     const imgurInput = document.getElementById('settings-imgur-id') as HTMLInputElement;
+    expect(imgbbInput.type).toBe('password');
+    fireEvent.click(screen.getByRole('button', { name: 'Show ImgBB API Key' }));
+    expect(imgbbInput.type).toBe('text');
     fireEvent.change(imgbbInput, { target: { value: 'my-imgbb-key' } });
     fireEvent.change(imgurInput, { target: { value: 'my-imgur-id' } });
     fireEvent.click(screen.getByText('Save'));

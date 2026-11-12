@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('MojiSnap Studio E2E Suite', () => {
+test.describe('Smolji Studio E2E Suite', () => {
   test.beforeEach(async ({ page }) => {
     // Stub external CDN and upload requests so E2E tests are fast and deterministic in CI
     await page.route('https://emoji-cdn.mqrio.dev/**', async (route) => {
@@ -20,8 +20,8 @@ test.describe('MojiSnap Studio E2E Suite', () => {
   });
 
   test('renders full studio layout, header controls, canvas, and sidebars', async ({ page }) => {
-    await expect(page).toHaveTitle(/MojiSnap/i);
-    await expect(page.getByRole('heading', { name: 'MojiSnap' })).toBeVisible();
+    await expect(page).toHaveTitle(/Smolji/i);
+    await expect(page.getByRole('heading', { name: 'Smolji' })).toBeVisible();
     await expect(page.getByText('Studio Assets')).toBeVisible();
     await expect(page.getByText('Layers Hierarchy')).toBeVisible();
     await expect(page.getByText('Artboard Style')).toBeVisible();
@@ -57,10 +57,11 @@ test.describe('MojiSnap Studio E2E Suite', () => {
     await page.getByTitle('Delete Layer').click();
     await expect(page.getByText('At least one layer must remain in workspace!')).toBeVisible();
 
-    // Change visual style via select
-    const styleSelect = page.locator('#layer-style');
-    await styleSelect.selectOption('google');
-    await expect(styleSelect).toHaveValue('google');
+    // Change visual style via custom StudioSelect dropdown
+    const styleTrigger = page.getByRole('combobox', { name: 'Visual Style' });
+    await styleTrigger.click();
+    await page.getByRole('option', { name: /Google Noto/i }).click();
+    await expect(styleTrigger).toContainText('Google Noto');
 
     // Spawn a second layer from Style Variations Explorer
     await page.getByTitle('Spawn new Layer in this style').first().click();
@@ -93,7 +94,8 @@ test.describe('MojiSnap Studio E2E Suite', () => {
     // Artboard background modes
     await page.getByRole('button', { name: 'Invisible' }).click();
     await page.getByRole('button', { name: 'Solid' }).click();
-    await expect(page.locator('input[type="color"]')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open color picker' })).toBeVisible();
+    await expect(page.getByLabel('Hex color code')).toBeVisible();
     await page.getByRole('button', { name: 'Gradient' }).click();
     await page.getByTitle('Cyberpunk').click();
 
@@ -134,7 +136,7 @@ test.describe('MojiSnap Studio E2E Suite', () => {
         contentType: 'application/json',
         body: JSON.stringify({
           success: true,
-          data: { url: 'https://i.ibb.co/e2e/mojisnap.png' },
+          data: { url: 'https://i.ibb.co/e2e/smolji.png' },
         }),
       });
     });
@@ -150,12 +152,12 @@ test.describe('MojiSnap Studio E2E Suite', () => {
 
     // Upload via ImgBB and verify Direct Link Result
     await page.getByRole('button', { name: 'Link via ImgBB' }).click();
-    await expect(page.locator('input[value="https://i.ibb.co/e2e/mojisnap.png"]')).toBeVisible();
+    await expect(page.locator('input[value="https://i.ibb.co/e2e/smolji.png"]')).toBeVisible();
 
     // Trigger PNG sticker download and verify filename
     const downloadPromise = page.waitForEvent('download');
     await page.getByTitle('Download PNG sticker file').click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/^mojisnap_.*_sticker_512px\.png$/);
+    expect(download.suggestedFilename()).toMatch(/^smolji_.*_sticker_512px\.png$/);
   });
 });
