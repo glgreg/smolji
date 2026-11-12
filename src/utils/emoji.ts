@@ -73,23 +73,27 @@ export function getGemojiList() {
  * @param {string} style - The style ID (e.g. 'google')
  * @returns {string} - The full URL to fetch the emoji image
  */
-export function getEmojiUrl(emoji, style) {
+export function getEmojiUrl(emoji: string, style: string) {
   if (!emoji) return '';
   return `https://emoji-cdn.mqrio.dev/${encodeURIComponent(emoji)}?style=${style}`;
 }
+
+let cachedSegmenter: Intl.Segmenter | null = null;
 
 /**
  * Parses text to extract all valid emoji grapheme clusters.
  * @param {string} text - The input text containing emojis
  * @returns {string[]} - An array of unique emoji strings
  */
-export function parseEmojis(text) {
+export function parseEmojis(text: string) {
   if (!text) return [];
   
   // Use Intl.Segmenter to accurately extract grapheme clusters (essential for ZWJ sequences)
   if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-    const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
-    const segments = Array.from(segmenter.segment(text)).map(s => s.segment);
+    if (!cachedSegmenter) {
+      cachedSegmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+    }
+    const segments = Array.from(cachedSegmenter.segment(text)).map(s => s.segment);
     
     // Emoji regex checking both standard emojis and extended pictographics (like ZWJ and modifiers)
     const emojiRegex = /[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u;
@@ -111,14 +115,14 @@ export function parseEmojis(text) {
  * @param {string} apiKey - ImgBB API key
  * @returns {Promise<string>} - The direct URL of the uploaded image
  */
-export async function uploadToImgBB(image, apiKey) {
+export async function uploadToImgBB(image: Blob | string, apiKey: string) {
   if (!apiKey) {
     throw new Error('ImgBB API Key is required. Please set it in Settings.');
   }
 
   let base64Data = '';
   if (image instanceof Blob) {
-    base64Data = await blobToBase64(image);
+    base64Data = (await blobToBase64(image)) as string;
   } else if (typeof image === 'string') {
     // If it is a dataURL, strip the prefix
     base64Data = image.split(',')[1] || image;
@@ -146,14 +150,14 @@ export async function uploadToImgBB(image, apiKey) {
  * @param {string} clientId - Imgur Client ID
  * @returns {Promise<string>} - The direct URL of the uploaded image
  */
-export async function uploadToImgur(image, clientId) {
+export async function uploadToImgur(image: Blob | string, clientId: string) {
   if (!clientId) {
     throw new Error('Imgur Client ID is required. Please set it in Settings.');
   }
 
   let base64Data = '';
   if (image instanceof Blob) {
-    base64Data = await blobToBase64(image);
+    base64Data = (await blobToBase64(image)) as string;
   } else if (typeof image === 'string') {
     base64Data = image.split(',')[1] || image;
   }
@@ -183,10 +187,16 @@ export async function uploadToImgur(image, clientId) {
  * @param {Blob} blob 
  * @returns {Promise<string>}
  */
-function blobToBase64(blob) {
+function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to read blob as Base64 string'));
+      }
+    };
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });

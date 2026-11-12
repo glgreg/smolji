@@ -1,30 +1,47 @@
 {
-  "name": "emoji_to_image",
+  "name": "my-app",
+  "version": "0.1.0",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
   "scripts": {
-    "dev": "bunx --bun vite --host",
-    "build": "bunx --bun vite build",
-    "lint": "bunx oxlint",
-    "preview": "bunx --bun vite preview --host"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint:ts": "eslint \"src/**/*.{ts,tsx}\" \"__tests__/**/*.{ts,tsx}\" \"e2e/**/*.ts\"",
+    "lint:js": "eslint \"scripts/**/*.js\" && tsc --allowJs --checkJs --noEmit scripts/remove-ignores.js",
+    "lint": "npm run lint:ts && npm run lint:js",
+    "test:unit": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test": "node scripts/remove-ignores.js && npx tsc --noEmit && npm run lint && npm run test:unit"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.3.1",
     "gemoji": "^8.1.0",
     "jszip": "^3.10.1",
-    "lucide-react": "^1.21.0",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "tailwindcss": "^4.3.1"
+    "lucide-react": "^1.25.0",
+    "next": "16.2.10",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
   },
   "devDependencies": {
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@playwright/test": "^1.65.0",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/coverage-v8": "^4.1.10",
+    "canvas": "^3.2.3",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "eslint-plugin-jsdoc": "^65.4.5",
     "gifuct-js": "^2.1.2",
+    "jsdom": "^29.1.1",
     "omggif": "^1.0.10",
-    "oxlint": "^1.69.0",
-    "vite": "^8.1.0"
+    "postcss": "^8.5.19",
+    "puppeteer": "^25.3.0",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }

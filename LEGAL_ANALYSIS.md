@@ -1,6 +1,6 @@
-# Legal Analysis & Monetization Feasibility (Google Ads / AdSense) on MojiSnap
+# Legal Analysis & Monetization Feasibility (Google Ads / AdSense) on Smolji
 
-This analysis evaluates the legal and regulatory feasibility of monetizing **MojiSnap** through advertisement networks, specifically **Google AdSense**, considering the copyright guidelines of emoji assets from different vendors.
+This analysis evaluates the legal and regulatory feasibility of monetizing **Smolji** through advertisement networks, specifically **Google AdSense**, considering the copyright guidelines of emoji assets from different vendors.
 
 ---
 
@@ -30,7 +30,7 @@ AdSense explicitly prohibits displaying ads on pages that contain copyrighted ma
 
 ### B. Valuable Inventory / Scraped Content Policy
 AdSense requires sites to offer "unique and relevant content." Sites that only serve as mirrors to download public assets without added value are often rejected under the **Low Value Content** policy.
-*   *How MojiSnap solves this:* The **Composition Editor (Multi-layer canvas, background customization, gradients, borders, and shadows)** is what secures the site's approval. By allowing the user to create a brand-new composition (an original derivative work), the site acts as a **utility design tool** rather than a simple image scraper, which is highly accepted by AdSense.
+*   *How Smolji solves this:* The **Composition Editor (Multi-layer canvas, background customization, gradients, borders, and shadows)** is what secures the site's approval. By allowing the user to create a brand-new composition (an original derivative work), the site acts as a **utility design tool** rather than a simple image scraper, which is highly accepted by AdSense.
 
 ---
 
@@ -43,14 +43,14 @@ To minimize legal risks and ensure fast Google AdSense approval, we suggest impl
     
 2.  **Add a Terms & Licenses Modal/Disclaimer:**
     Include a clear link in the footer or settings panel titled "Licenses & Attribution":
-    *   *MojiSnap is a customization utility tool. Emoji designs displayed are properties of their respective creators (Apple Inc., Google LLC, Microsoft Corp., Twitter Inc., OpenMoji). Open emojis are distributed under their respective licenses (MIT, Apache 2.0, CC BY-SA 4.0).*
+    *   *Smolji is a customization utility tool. Emoji designs displayed are properties of their respective creators (Apple Inc., Google LLC, Microsoft Corp., Twitter Inc., OpenMoji). Open emojis are distributed under their respective licenses (MIT, Apache 2.0, CC BY-SA 4.0).*
 
 3.  **Encourage Derivative Work:**
     Guide users to combine emojis, add gradients, and apply shadows. The more customized the final sticker composition is, the more it qualifies as a "derivative work" under Fair Use guidelines, protecting the platform.
 
 4.  **Add Static Text Content (Excellent for SEO & Ads Density):**
     To pass AdSense "text density" audits, add a small FAQ section at the bottom of the page explaining:
-    *   *What is MojiSnap?*
+    *   *What is Smolji?*
     *   *How do I download emojis as PNG images?*
     *   *How do I use custom emoji stickers for Discord Bots or Slack?*
     This boosts SEO (bringing organic search traffic) and provides the contextual text AdSense bots seek when reviewing websites.
@@ -59,4 +59,4 @@ To minimize legal risks and ensure fast Google AdSense approval, we suggest impl
 
 ## 4. Conclusion
 
-Monetizing MojiSnap via **Google AdSense is highly feasible**, provided the site is presented as an **interactive sticker composition utility tool** (enabled by our canvas studio) rather than a raw emoji scraper. Copyright compliance is maintained by attributing credits to the respective design creators in the site footer.
+Monetizing Smolji via **Google AdSense is highly feasible**, provided the site is presented as an **interactive sticker composition utility tool** (enabled by our canvas studio) rather than a raw emoji scraper. Copyright compliance is maintained by attributing credits to the respective design creators in the site footer.

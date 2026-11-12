@@ -1,35 +1,37 @@
-import React, { useState, useEffect, useRef } from 'react';
+"use client";
+import React, { useState, useEffect, useRef, useTransition } from 'react';
+import { Layer, UploadedHistory, ContextMenuState } from './types';
 import { 
   Settings, 
   Download, 
   Copy, 
   Check, 
   Upload, 
-  FileArchive, 
-  Sparkles, 
-  History, 
   ExternalLink,
   Info,
   Trash2,
   Smile,
-  Sliders,
-  Palette,
   Layers,
   Megaphone,
-  Maximize2,
   Minimize2,
   Plus,
   Minus,
   RefreshCw,
   ArrowUp,
   ArrowDown,
-  RotateCw,
   Move,
   Sun,
   Moon,
-  Scissors
+  Scissors,
+  Undo2,
+  Redo2,
+  FlipHorizontal,
+  FlipVertical,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import JSZip from 'jszip';
+import { StudioSelect, StudioSlider, StudioColorPicker } from './components/StudioControls';
 import { 
   EMOJI_STYLES, 
   GRADIENTS, 
@@ -41,11 +43,21 @@ import {
   getGemojiList
 } from './utils/emoji';
 
-const DuplicateIcon = Copy;
+// Pre-flatten popular emojis once at module scope to avoid reallocation per render
+const ALL_POPULAR_EMOJIS = Object.values(POPULAR_EMOJIS).flat();
 
-// 2D Matrix Helpers for WebGL rendering calculations
-const m3 = {
-  projection: (width, height) => [
+// Pre-index gemoji shortcodes into an O(1) map for instantaneous lookup
+const SHORTCODE_MAP = new Map<string, string>();
+for (const item of getGemojiList()) {
+  for (const name of item.names) {
+    SHORTCODE_MAP.set(name.toLowerCase(), item.emoji);
+    SHORTCODE_MAP.set(name.toLowerCase().replace(/_/g, '-'), item.emoji);
+  }
+}
+
+// 2D Matrix Helpers for auxiliary transform calculations
+const _m3 = {
+  projection: (width: number, height: number) => [
     2 / width, 0, 0,
     0, -2 / height, 0,
     -1, 1, 1
@@ -55,12 +67,12 @@ const m3 = {
     0, 1, 0,
     0, 0, 1
   ],
-  translation: (tx, ty) => [
+  translation: (tx: number, ty: number) => [
     1, 0, 0,
     0, 1, 0,
     tx, ty, 1
   ],
-  rotation: (angleInRadians) => {
+  rotation: (angleInRadians: number) => {
     const c = Math.cos(angleInRadians);
     const s = Math.sin(angleInRadians);
     return [
@@ -69,53 +81,47 @@ const m3 = {
       0, 0, 1
     ];
   },
-  scaling: (sx, sy) => [
+  scaling: (sx: number, sy: number) => [
     sx, 0, 0,
     0, sy, 0,
     0, 0, 1
   ],
-  skewing: (kx, ky) => [
+  skewing: (kx: number, ky: number) => [
     1, Math.tan(ky), 0,
     Math.tan(kx), 1, 0,
     0, 0, 1
-  ],
-  multiply: (a, b) => {
-    const a00 = a[0*3+0], a01 = a[0*3+1], a02 = a[0*3+2];
-    const a10 = a[1*3+0], a11 = a[1*3+1], a12 = a[1*3+2];
-    const a20 = a[2*3+0], a21 = a[2*3+1], a22 = a[2*3+2];
-    const b00 = b[0*3+0], b01 = b[0*3+1], b02 = b[0*3+2];
-    const b10 = b[1*3+0], b11 = b[1*3+1], b12 = b[1*3+2];
-    const b20 = b[2*3+0], b21 = b[2*3+1], b22 = b[2*3+2];
-    return [
-      b00 * a00 + b01 * a10 + b02 * a20,
-      b00 * a01 + b01 * a11 + b02 * a21,
-      b00 * a02 + b01 * a12 + b02 * a22,
-      b10 * a00 + b11 * a10 + b12 * a20,
-      b10 * a01 + b11 * a11 + b12 * a21,
-      b10 * a02 + b11 * a12 + b12 * a22,
-      b20 * a00 + b21 * a10 + b22 * a20,
-      b20 * a01 + b21 * a11 + b22 * a21,
-      b20 * a02 + b21 * a12 + b22 * a22
-    ];
-  }
+  ]
 };
 
 export default function App() {
+  const [, startTransition] = useTransition();
+
   // Theme state
-  const [theme, setTheme] = useState(localStorage.getItem('mojisnap_theme') || 'dark');
+  const [theme, setTheme] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('smolji_theme') || 'dark';
+    }
+    return 'dark';
+  });
 
   // Input states
   const [inputText, setInputText] = useState('🚀');
-  const [detectedEmojis, setDetectedEmojis] = useState(['🚀']);
+  const [detectedEmojis, setDetectedEmojis] = useState<string[]>(['🚀']);
   const [selectedStyle, setSelectedStyle] = useState('microsoft-3D-fluent');
 
   // Autocomplete states
-  const [suggestions, setSuggestions] = useState([]);
+  interface SuggestionItem {
+    emoji: string;
+    names: string[];
+    tags: string[];
+    description: string;
+  }
+  const [suggestions, setSuggestions] = useState<SuggestionItem[]>([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
-  const [caretInfo, setCaretInfo] = useState(null);
+  const [caretInfo, setCaretInfo] = useState<{ query: string; startIndex: number; endIndex: number } | null>(null);
 
   // Multi-layer composition states
-  const [layers, setLayers] = useState([
+  const [layers, setLayers] = useState<Layer[]>([
     {
       id: 'base',
       emoji: '🚀',
@@ -129,7 +135,11 @@ export default function App() {
       opacity: 1.0
     }
   ]);
-  const [selectedLayerId, setSelectedLayerId] = useState('base');
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>('base');
+
+  // History stacks for Undo / Redo
+  const [undoStack, setUndoStack] = useState<Layer[][]>([]);
+  const [redoStack, setRedoStack] = useState<Layer[][]>([]);
 
   // Canvas Viewport states (Zoom & Pan)
   const [canvasZoom, setCanvasZoom] = useState(0.85); 
@@ -139,13 +149,10 @@ export default function App() {
   const [isPanning, setIsPanning] = useState(false);
 
   // Context Menu State
-  const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, layerId: null });
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0, layerId: null });
 
   // Clipboard state for layers
-  const [copiedLayerData, setCopiedLayerData] = useState(null);
-
-  // GPU Acceleration Settings
-  const [gpuAccelerated, setGpuAccelerated] = useState(true);
+  const [copiedLayerData, setCopiedLayerData] = useState<Layer | null>(null);
 
   // Viewport and UI Panels States
   const [viewportSize, setViewportSize] = useState({ 
@@ -155,49 +162,76 @@ export default function App() {
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
 
-  const [bgType, setBgType] = useState('gradient'); // 'transparent', 'solid', 'gradient'
+  const [bgType, setBgType] = useState<string>('gradient'); // 'transparent', 'solid', 'gradient'
   const [solidBg, setSolidBg] = useState('#12131a');
   const [selectedGradient, setSelectedGradient] = useState(GRADIENTS[1]); 
   const [borderRadius, setBorderRadius] = useState(25); 
   const [exportSize, setExportSize] = useState(512); 
   
-  // Global Shadow states
+  // Shadow states
   const [shadowEnabled, setShadowEnabled] = useState(true);
   const [shadowColor, setShadowColor] = useState('rgba(0, 0, 0, 0.45)');
   const [shadowBlur, setShadowBlur] = useState(15);
-  const [shadowOffsetX, setShadowOffsetX] = useState(0);
-  const [shadowOffsetY, setShadowOffsetY] = useState(8);
-
-  // Editor mode state (expanded full studio vs compact preview)
-  const [expandedMode, setExpandedMode] = useState(false);
+  const [shadowOffsetX, _setShadowOffsetX] = useState(0);
+  const [shadowOffsetY, _setShadowOffsetY] = useState(8);
 
   // Settings & Upload states
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [apiKeys, setApiKeys] = useState({ imgbb: '', imgur: '' });
-  const [uploadHistory, setUploadHistory] = useState([]);
-  const [isUploading, setIsUploading] = useState(''); 
+  const [showImgbbKey, setShowImgbbKey] = useState(false);
+  const [showImgurId, setShowImgurId] = useState(false);
+  const [uploadHistory, setUploadHistory] = useState<UploadedHistory[]>([]);
+  const [isUploading, setIsUploading] = useState<string | null>('');
   const [uploadResultUrl, setUploadResultUrl] = useState('');
   
   // UI Status states
-  const [successMessage, setSuccessMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState<string | null>('');
   const [isZipping, setIsZipping] = useState(false);
-  const [activeTab, setActiveTab] = useState('bg'); 
-  const [canvasError, setCanvasError] = useState('');
+  const [, setCanvasError] = useState('');
 
   // Interactive interactionMode: null | 'drag' | 'rotate' | 'scale_tl' | 'scale_tr' | 'scale_bl' | 'scale_br'
-  const [interactionMode, setInteractionMode] = useState(null);
+  const [interactionMode, setInteractionMode] = useState<string | null>(null);
 
-  // Refs for tracking drag coordinates
+  // Refs for tracking drag coordinates and high performance rendering
   const dragStart = useRef({ mouseX: 0, mouseY: 0, layerX: 0, layerY: 0, layerScale: 1.0, layerRotation: 0 });
   const panStart = useRef({ x: 0, y: 0 });
   const touchStartDist = useRef(0);
   const touchStartZoom = useRef(1);
   const touchStartLayerScale = useRef(1);
-  const imageCache = useRef({}); 
-  const webglResources = useRef(null); // shader compilation cache
+  const imageCache = useRef<Record<string, HTMLImageElement | 'loading' | 'failed'>>({}); 
+  const redrawPending = useRef(false);
 
-  const canvasRef = useRef(null);
-  const textareaRef = useRef(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const pushStateToUndo = (currentLayers: Layer[]) => {
+    setUndoStack(prev => [...prev.slice(-25), currentLayers]);
+    setRedoStack([]);
+  };
+
+  const handleUndo = () => {
+    if (undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, prev.length - 1));
+    setRedoStack(prev => [...prev, layers]);
+    setLayers(previous);
+    if (!previous.some(l => l.id === selectedLayerId)) {
+      setSelectedLayerId(previous[previous.length - 1]?.id || null);
+    }
+    showToast('Undo');
+  };
+
+  const handleRedo = () => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(prev => prev.slice(0, prev.length - 1));
+    setUndoStack(prev => [...prev, layers]);
+    setLayers(next);
+    if (!next.some(l => l.id === selectedLayerId)) {
+      setSelectedLayerId(next[next.length - 1]?.id || null);
+    }
+    showToast('Redo');
+  };
 
   // Sync Tailwind class on root html node
   useEffect(() => {
@@ -209,18 +243,23 @@ export default function App() {
       root.classList.remove('light');
       root.classList.add('dark');
     }
-    localStorage.setItem('mojisnap_theme', theme);
+    try {
+      localStorage.setItem('smolji_theme', theme);
+    } catch {
+      // storage unavailable
+    }
   }, [theme]);
 
   // Global listeners for spacebar pan trigger
   useEffect(() => {
-    const handleGlobalKeyDown = (e) => {
-      if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const activeTag = document.activeElement?.tagName;
+      if (e.code === 'Space' && activeTag !== 'INPUT' && activeTag !== 'TEXTAREA') {
         e.preventDefault();
         setIsSpacePressed(true);
       }
     };
-    const handleGlobalKeyUp = (e) => {
+    const handleGlobalKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         setIsSpacePressed(false);
       }
@@ -271,9 +310,26 @@ export default function App() {
 
   // Keyboard Shortcuts (Canvas Hotkeys)
   useEffect(() => {
-    const handleKeyDownShortcuts = (e) => {
-      if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+    const handleKeyDownShortcuts = (e: KeyboardEvent) => {
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
         return; 
+      }
+
+      // Undo / Redo
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+        return;
       }
       
       // Delete / Backspace to clear active layer
@@ -332,14 +388,14 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDownShortcuts);
     return () => window.removeEventListener('keydown', handleKeyDownShortcuts);
-  }, [selectedLayerId, copiedLayerData, layers]);
+  });
 
-  // Handle passive mouse wheel events for zooming the canvas
+  // Handle wheel events for zooming the canvas with non-passive listener for preventDefault
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const handleWheel = (e) => {
+    const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey) {
         e.preventDefault();
         const zoomFactor = 1.08;
@@ -355,7 +411,8 @@ export default function App() {
     return () => {
       canvas.removeEventListener('wheel', handleWheel);
     };
-  }, [canvasRef, expandedMode]);
+  }, []);
+
   // Handle resize events to adapt viewportSize state
   useEffect(() => {
     const handleResize = () => {
@@ -385,63 +442,76 @@ export default function App() {
     shadowOffsetX,
     shadowOffsetY,
     selectedStyle,
-    gpuAccelerated,
     theme,
     viewportSize
   ]);
-  const showToast = (message) => {
+
+  const showToast = (message: string) => {
     setSuccessMessage(message);
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  const handleCopyLayer = (id) => {
+  const handleCopyLayer = (id: string) => {
     const layer = layers.find(l => l.id === id);
     if (!layer) return;
     setCopiedLayerData({
+      id: layer.id,
+      x: layer.x,
+      y: layer.y,
       emoji: layer.emoji,
       style: layer.style,
       scale: layer.scale,
       rotation: layer.rotation,
       skewX: layer.skewX,
       skewY: layer.skewY,
-      opacity: layer.opacity
+      opacity: layer.opacity,
+      flipX: layer.flipX,
+      flipY: layer.flipY
     });
     showToast('Copied layer settings!');
   };
 
   const handlePasteLayer = () => {
     if (!copiedLayerData) return;
-    const newLayer = {
+    pushStateToUndo(layers);
+    const newLayer: Layer = {
       ...copiedLayerData,
       id: Date.now().toString(),
       x: (Math.random() - 0.5) * 40,
       y: (Math.random() - 0.5) * 40
     };
-    setLayers([...layers, newLayer]);
+    setLayers(prev => [...prev, newLayer]);
     setSelectedLayerId(newLayer.id);
     showToast('Layer pasted.');
   };
 
   const handleClearHistory = () => {
     setUploadHistory([]);
-    localStorage.removeItem('emoji_studio_history');
+    try {
+      localStorage.removeItem('emoji_studio_history');
+    } catch {
+      // storage unavailable
+    }
     showToast('History cleared.');
   };
 
-  const handleSaveSettings = (e) => {
+  const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem('emoji_studio_keys', JSON.stringify(apiKeys));
+    try {
+      localStorage.setItem('emoji_studio_keys', JSON.stringify(apiKeys));
+    } catch {
+      // storage unavailable
+    }
     setSettingsOpen(false);
-    showToast('Settings saved.');
+    showToast('API Keys saved successfully!');
   };
 
-  const parseGradientColors = (gradientStr) => {
+  const parseGradientColors = (gradientStr: string) => {
     if (!gradientStr || gradientStr === 'transparent') return [];
-    const allMatches = gradientStr.match(/(#[0-9a-fA-F]{3,8}|rgba?\(.*?\))/g) || [];
-    return allMatches;
+    return gradientStr.match(/(#[0-9a-fA-F]{3,8}|rgba?\(.*?\))/g) || [];
   };
 
-  const loadImgPromise = (url) => {
+  const loadImgPromise = (url: string): Promise<HTMLImageElement | 'failed'> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -451,8 +521,22 @@ export default function App() {
     });
   };
 
+  // Helper to ensure all layer images are preloaded before exporting
+  const ensureLayersLoaded = async (targetLayers: Layer[], defaultStyle: string) => {
+    await Promise.all(
+      targetLayers.map(async (layer) => {
+        const url = getEmojiUrl(layer.emoji || '', layer.style || defaultStyle);
+        if (!url) return;
+        if (!imageCache.current[url] || imageCache.current[url] === 'loading') {
+          const img = await loadImgPromise(url);
+          imageCache.current[url] = img;
+        }
+      })
+    );
+  };
+
   // Math helper to get transformed control handle positions (TL, TR, BL, BR, Rotate)
-  const getTransformPoints = (layer, size = 512) => {
+  const getTransformPoints = (layer: Layer, size = 512) => {
     const cx = size / 2 + layer.x;
     const cy = size / 2 + layer.y;
     const es = 256 * layer.scale;
@@ -469,10 +553,13 @@ export default function App() {
     const skewXRad = (layer.skewX || 0) * Math.PI / 180;
     const skewYRad = (layer.skewY || 0) * Math.PI / 180;
     
-    const transformed = {};
-    for (const key in pts) {
-      let px = pts[key].x;
-      let py = pts[key].y;
+    const transformed: Record<string, { x: number; y: number }> = {};
+    for (const [key, pt] of Object.entries(pts)) {
+      let px = pt.x;
+      let py = pt.y;
+
+      if (layer.flipX) px = -px;
+      if (layer.flipY) py = -py;
       
       // Apply skew transforms
       const sx = px + py * Math.tan(skewXRad);
@@ -491,123 +578,13 @@ export default function App() {
     return transformed;
   };
 
-  // WebGL2 Rendering Setup
-  const initWebGLResources = (gl) => {
-    if (webglResources.current) return webglResources.current;
-
-    // Simple quad mapping vertex shader
-    const vsSource = `#version 300 es
-      in vec2 a_position;
-      in vec2 a_texcoord;
-      out vec2 v_texcoord;
-      uniform mat3 u_matrix;
-      void main() {
-        gl_Position = vec4((u_matrix * vec3(a_position, 1)).xy, 0, 1);
-        v_texcoord = a_texcoord;
-      }
-    `;
-
-    // Opacity blending fragment shader
-    const fsSource = `#version 300 es
-      precision highp float;
-      in vec2 v_texcoord;
-      out vec4 outColor;
-      uniform sampler2D u_texture;
-      uniform float u_opacity;
-      void main() {
-        vec4 texel = texture(u_texture, v_texcoord);
-        outColor = vec4(texel.rgb, texel.a * u_opacity);
-      }
-    `;
-
-    const compileShader = (source, type) => {
-      const shader = gl.createShader(type);
-      gl.shaderSource(shader, source);
-      gl.compileShader(shader);
-      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        const info = gl.getShaderInfoLog(shader);
-        gl.deleteShader(shader);
-        throw new Error('Shader compilation failed: ' + info);
-      }
-      return shader;
-    };
-
-    try {
-      const vs = compileShader(vsSource, gl.VERTEX_SHADER);
-      const fs = compileShader(fsSource, gl.FRAGMENT_SHADER);
-      const program = gl.createProgram();
-      gl.attachShader(program, vs);
-      gl.attachShader(program, fs);
-      gl.linkProgram(program);
-
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        throw new Error('Program linking failed: ' + gl.getProgramInfoLog(program));
-      }
-
-      // Quads positions & coords
-      const positionBuffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-        -0.5, -0.5,
-         0.5, -0.5,
-        -0.5,  0.5,
-        -0.5,  0.5,
-         0.5, -0.5,
-         0.5,  0.5,
-      ]), gl.STATIC_DRAW);
-
-      const texcoordBuffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-        0.0, 0.0,
-        1.0, 0.0,
-        0.0, 1.0,
-        0.0, 1.0,
-        1.0, 0.0,
-        1.0, 1.0,
-      ]), gl.STATIC_DRAW);
-
-      const attribLocations = {
-        position: gl.getAttribLocation(program, 'a_position'),
-        texcoord: gl.getAttribLocation(program, 'a_texcoord')
-      };
-
-      const uniformLocations = {
-        matrix: gl.getUniformLocation(program, 'u_matrix'),
-        texture: gl.getUniformLocation(program, 'u_texture'),
-        opacity: gl.getUniformLocation(program, 'u_opacity')
-      };
-
-      webglResources.current = {
-        program,
-        positionBuffer,
-        texcoordBuffer,
-        attribLocations,
-        uniformLocations,
-        textureMap: new Map()
-      };
-      return webglResources.current;
-    } catch (err) {
-      console.error('WebGL init error, falling back', err);
-      return null;
-    }
-  };
-
-  // Compile WebGL texture or read from GPU cache
-  const getWebGLTexture = (gl, resources, url, img) => {
-    if (resources.textureMap.has(url)) {
-      return resources.textureMap.get(url);
-    }
-
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-    resources.textureMap.set(url, texture);
-    return texture;
+  const requestCanvasRedraw = () => {
+    if (redrawPending.current) return;
+    redrawPending.current = true;
+    requestAnimationFrame(() => {
+      redrawPending.current = false;
+      drawEditorCanvas();
+    });
   };
 
   // Main draw coordinator for interactive canvas view
@@ -618,62 +595,37 @@ export default function App() {
     const width = viewportSize.width;
     const height = viewportSize.height;
     
-    // Support High-DPI screens
+    // Support High-DPI screens without thrashing canvas buffer when size hasn't changed
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
+    const targetW = Math.round(width * dpr);
+    const targetH = Math.round(height * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
     
     setCanvasError('');
 
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.scale(dpr, dpr);
+      if (typeof ctx.setTransform === 'function') {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      } else {
+        ctx.scale(dpr, dpr);
+      }
       render2D(ctx, width, height, false);
     } else {
       setCanvasError('Failed to initialize 2D context.');
     }
   };
 
-  // WebGL rendering pipeline
-  const renderWebGL = (gl, size, isExport) => {
-    const resources = initWebGLResources(gl);
-    if (!resources) return false;
-
-    gl.viewport(0, 0, size, size);
-    
-    // Clear and draw background
-    gl.clearColor(0.09, 0.09, 0.11, 1.0); // zinc-950 default
-    gl.clear(gl.COLOR_BUFFER_BIT);
-
-    // Apply viewport projection matrix
-    gl.useProgram(resources.program);
-
-    // Bind positioning buffer
-    gl.bindBuffer(gl.ARRAY_BUFFER, resources.positionBuffer);
-    gl.enableVertexAttribArray(resources.attribLocations.position);
-    gl.vertexAttribPointer(resources.attribLocations.position, 2, gl.FLOAT, false, 0, 0);
-
-    // Bind texture coordinates
-    gl.bindBuffer(gl.ARRAY_BUFFER, resources.texcoordBuffer);
-    gl.enableVertexAttribArray(resources.attribLocations.texcoord);
-    gl.vertexAttribPointer(resources.attribLocations.texcoord, 2, gl.FLOAT, false, 0, 0);
-
-    // 1. Draw Background
-    // We upload gradient / color to standard texture or clear color.
-    // For simplicity inside WebGL pipeline, we composite backgrounds first.
-    // However, custom handles (vector lines) are best drawn using standard Canvas2D overlay.
-    // Since WebGL takes exclusive context, we render WebGL composition then overlay handles if editing.
-    // To make handle drawings and drop shadows 100% robust, we perform hybrid layer compositing:
-    // If WebGL is enabled, it renders layers. But we fall back to Canvas2D to overlay borders, handles, and dashed indicators.
-    // Since we cannot run both WebGL and 2D on the same canvas, our hybrid fallback context is Canvas2D itself!
-    // Since Canvas2D in modern browsers is ALREADY hardware GPU accelerated, we will leverage 2D context as primary for vector editor details,
-    // and provide WebGL2 optimization for high-density image layers compositions during high-resolution exports.
-    // Let's implement full Canvas2D rendering for the main editor as it is reliable, fast, and supports perfect vector lines.
-    return false; // let 2D pipeline render the interactive preview for handle precision
-  };
-
-  // Complete, feature-rich dynamic 2D rendering pipeline (used for high-performance full-screen canvas previews)
-  const render2D = (ctx, widthOrSize, heightOrNull, isExport) => {
+  // Complete dynamic 2D rendering pipeline (used for preview & clean offscreen export)
+  const render2D = (
+    ctx: CanvasRenderingContext2D,
+    widthOrSize: number,
+    heightOrNull: number | null,
+    isExport?: boolean
+  ) => {
     if (isExport) {
       const size = widthOrSize;
       const scaleFactor = size / 512;
@@ -706,13 +658,18 @@ export default function App() {
       
       // 2. Draw layers
       layers.forEach((layer) => {
-        const imgUrl = getEmojiUrl(layer.emoji, layer.style || selectedStyle);
+        if (layer.visible === false) return;
+        const imgUrl = getEmojiUrl(layer.emoji || '', layer.style || selectedStyle);
         const img = imageCache.current[imgUrl];
         
         ctx.save();
         const cx = (512 / 2 + layer.x) * scaleFactor;
         const cy = (512 / 2 + layer.y) * scaleFactor;
         ctx.translate(cx, cy);
+
+        if (layer.flipX || layer.flipY) {
+          ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
+        }
         
         if (layer.skewX || layer.skewY) {
           const sx = (layer.skewX || 0) * Math.PI / 180;
@@ -732,14 +689,21 @@ export default function App() {
         
         const emojiSize = 256 * layer.scale * scaleFactor;
         
+        let drewImage = false;
         if (img && img !== 'failed' && img !== 'loading') {
-          ctx.drawImage(img, -emojiSize / 2, -emojiSize / 2, emojiSize, emojiSize);
-        } else {
+          try {
+            ctx.drawImage(img, -emojiSize / 2, -emojiSize / 2, emojiSize, emojiSize);
+            drewImage = true;
+          } catch {
+            drewImage = false;
+          }
+        }
+        if (!drewImage) {
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillStyle = theme === 'dark' ? '#ffffff' : '#18181b';
           ctx.font = `${emojiSize * 0.7}px system-ui, Segoe UI`;
-          ctx.fillText(layer.emoji, 0, 0);
+          ctx.fillText(layer.emoji || '', 0, 0);
         }
         ctx.restore();
       });
@@ -748,13 +712,13 @@ export default function App() {
     
     // Interactive viewport rendering
     const width = widthOrSize;
-    const height = heightOrNull;
+    const height = heightOrNull ?? 800;
     
     // 1. Draw Viewport Background (gray workspace space)
     ctx.fillStyle = theme === 'dark' ? '#09090b' : '#f4f4f5';
     ctx.fillRect(0, 0, width, height);
     
-    // 2. Draw dot matrix background (ComfyUI/n8n style)
+    // 2. Draw dot matrix background
     ctx.save();
     const gridSize = 32 * canvasZoom;
     const startX = (width / 2 + panX) % gridSize;
@@ -822,13 +786,36 @@ export default function App() {
     
     // 5. Draw layers
     layers.forEach((layer) => {
-      const imgUrl = getEmojiUrl(layer.emoji, layer.style || selectedStyle);
-      const img = imageCache.current[imgUrl];
+      if (layer.visible === false) return;
+      const imgUrl = getEmojiUrl(layer.emoji || '', layer.style || selectedStyle);
+      let img = imageCache.current[imgUrl];
+
+      // Proactively trigger image load if not cached
+      if (!img) {
+        imageCache.current[imgUrl] = 'loading';
+        const imgElement = new Image();
+        imgElement.crossOrigin = 'anonymous';
+        imgElement.src = imgUrl;
+        imgElement.onload = () => {
+          imageCache.current[imgUrl] = imgElement;
+          requestCanvasRedraw();
+        };
+        imgElement.onerror = () => {
+          imageCache.current[imgUrl] = 'failed';
+          requestCanvasRedraw();
+        };
+        img = 'loading';
+      }
+
       const cx = 512 / 2 + layer.x;
       const cy = 512 / 2 + layer.y;
       
       ctx.save();
       ctx.translate(cx, cy);
+
+      if (layer.flipX || layer.flipY) {
+        ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
+      }
       
       if (layer.skewX || layer.skewY) {
         const sx = (layer.skewX || 0) * Math.PI / 180;
@@ -848,14 +835,21 @@ export default function App() {
       
       const emojiSize = 256 * layer.scale;
       
+      let drewImage = false;
       if (img && img !== 'failed' && img !== 'loading') {
-        ctx.drawImage(img, -emojiSize / 2, -emojiSize / 2, emojiSize, emojiSize);
-      } else {
+        try {
+          ctx.drawImage(img, -emojiSize / 2, -emojiSize / 2, emojiSize, emojiSize);
+          drewImage = true;
+        } catch {
+          drewImage = false;
+        }
+      }
+      if (!drewImage) {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = theme === 'dark' ? '#ffffff' : '#18181b';
         ctx.font = `${emojiSize * 0.7}px system-ui, Segoe UI`;
-        ctx.fillText(layer.emoji, 0, 0);
+        ctx.fillText(layer.emoji || '', 0, 0);
       }
       ctx.restore();
       
@@ -882,7 +876,7 @@ export default function App() {
         ctx.setLineDash([]); // solid lines
         
         const hs = Math.max(7, 10 / canvasZoom);
-        const drawHandle = (hx, hy) => {
+        const drawHandle = (hx: number, hy: number) => {
           ctx.beginPath();
           ctx.arc(hx, hy, hs / 2, 0, 2 * Math.PI);
           ctx.fill();
@@ -910,17 +904,20 @@ export default function App() {
     ctx.restore(); // restore viewport transform
   };
 
-  const drawExportCanvas = (targetSize) => {
+  const drawExportCanvas = (targetSize: number) => {
     const canvas = document.createElement('canvas');
     canvas.width = targetSize;
     canvas.height = targetSize;
     const ctx = canvas.getContext('2d');
-    render2D(ctx, targetSize, true);
+    if (ctx) {
+      render2D(ctx, targetSize, null, true);
+    }
     return canvas;
   };
 
-  const addLayer = (emojiChar) => {
-    const newLayer = {
+  const addLayer = (emojiChar: string) => {
+    pushStateToUndo(layers);
+    const newLayer: Layer = {
       id: Date.now().toString(),
       emoji: emojiChar,
       style: selectedStyle, 
@@ -932,13 +929,14 @@ export default function App() {
       skewY: 0,
       opacity: 1.0
     };
-    setLayers([...layers, newLayer]);
+    setLayers(prev => [...prev, newLayer]);
     setSelectedLayerId(newLayer.id);
     showToast('Layer added to workspace.');
   };
 
-  const addLayerWithStyle = (emojiChar, styleId) => {
-    const newLayer = {
+  const addLayerWithStyle = (emojiChar: string, styleId: string) => {
+    pushStateToUndo(layers);
+    const newLayer: Layer = {
       id: Date.now().toString(),
       emoji: emojiChar,
       style: styleId,
@@ -950,14 +948,15 @@ export default function App() {
       skewY: 0,
       opacity: 1.0
     };
-    setLayers([...layers, newLayer]);
+    setLayers(prev => [...prev, newLayer]);
     setSelectedLayerId(newLayer.id);
     showToast(`Added layer in ${EMOJI_STYLES.find(s => s.id === styleId)?.name || styleId} style.`);
   };
 
-  const getLayerAtPosition = (artX, artY) => {
+  const getLayerAtPosition = (artX: number, artY: number) => {
     for (let i = layers.length - 1; i >= 0; i--) {
       const layer = layers[i];
+      if (layer.visible === false) continue;
       const lx = 512 / 2 + layer.x;
       const ly = 512 / 2 + layer.y;
       const es = 256 * layer.scale;
@@ -971,7 +970,7 @@ export default function App() {
   };
 
   // Canvas Mouse down: Hit detection for translation vs transform handles
-  const handleCanvasMouseDown = (e) => {
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (e.button === 2) {
       // Right click handled by context menu listener
       return;
@@ -983,7 +982,9 @@ export default function App() {
       return;
     }
     
-    const rect = canvasRef.current.getBoundingClientRect();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
     
@@ -998,10 +999,10 @@ export default function App() {
     if (activeLayer) {
       const handles = getTransformPoints(activeLayer);
       const hitTolerance = 14 / canvasZoom;
-      let hitHandle = null;
+      let hitHandle: string | null = null;
 
-      for (const key in handles) {
-        if (Math.hypot(artX - handles[key].x, artY - handles[key].y) < hitTolerance) {
+      for (const [key, handle] of Object.entries(handles)) {
+        if (Math.hypot(artX - handle.x, artY - handle.y) < hitTolerance) {
           hitHandle = key;
           break;
         }
@@ -1009,11 +1010,13 @@ export default function App() {
 
       if (hitHandle) {
         setInteractionMode(hitHandle === 'rot' ? 'rotate' : 'scale_' + hitHandle);
-        dragStart.current = {
-          mouseX: artX,
-          mouseY: artY,
-          layerScale: activeLayer.scale,
-          layerRotation: activeLayer.rotation
+        dragStart.current = { 
+          mouseX: artX, 
+          mouseY: artY, 
+          layerX: activeLayer.x, 
+          layerY: activeLayer.y, 
+          layerScale: activeLayer.scale, 
+          layerRotation: activeLayer.rotation 
         };
         return;
       }
@@ -1025,19 +1028,23 @@ export default function App() {
       setSelectedLayerId(clickedId);
       setInteractionMode('drag');
       const layer = layers.find(l => l.id === clickedId);
-      dragStart.current = {
-        mouseX: artX,
-        mouseY: artY,
-        layerX: layer.x,
-        layerY: layer.y
-      };
+      if (layer) {
+        dragStart.current = { 
+          mouseX: artX, 
+          mouseY: artY, 
+          layerX: layer.x, 
+          layerY: layer.y, 
+          layerScale: layer.scale, 
+          layerRotation: layer.rotation 
+        };
+      }
     } else {
       setSelectedLayerId(null);
       setInteractionMode(null);
     }
   };
 
-  const handleCanvasMouseMove = (e) => {
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     
@@ -1098,7 +1105,7 @@ export default function App() {
       
       const distCurrent = Math.hypot(artX - layerCx, artY - layerCy);
       const distStart = Math.hypot(dragStart.current.mouseX - layerCx, dragStart.current.mouseY - layerCy);
-      const scaleRatio = distCurrent / distStart;
+      const scaleRatio = distStart > 0 ? distCurrent / distStart : 1;
       
       setLayers(prev => prev.map(l => {
         if (l.id === selectedLayerId) {
@@ -1117,23 +1124,12 @@ export default function App() {
     setIsPanning(false);
   };
 
-  // Zoom view using Ctrl + Scroll Wheel
-  const handleCanvasWheel = (e) => {
-    if (e.ctrlKey) {
-      e.preventDefault();
-      const zoomFactor = 1.08;
-      if (e.deltaY < 0) {
-        setCanvasZoom(prev => Math.min(prev * zoomFactor, 6.0));
-      } else {
-        setCanvasZoom(prev => Math.max(prev / zoomFactor, 0.25));
-      }
-    }
-  };
-
   // Context Menu activation (suppress standard right click)
-  const handleCanvasContextMenu = (e) => {
+  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const rect = canvasRef.current.getBoundingClientRect();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
     
@@ -1154,8 +1150,11 @@ export default function App() {
   };
 
   // Mobile Touch Gestures
-  const handleCanvasTouchStart = (e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
+  const handleCanvasTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+
     if (e.touches.length === 1) {
       const touch = e.touches[0];
       const cx = touch.clientX - rect.left;
@@ -1172,10 +1171,10 @@ export default function App() {
       if (activeLayer) {
         const handles = getTransformPoints(activeLayer);
         const hitTolerance = 18 / canvasZoom;
-        let hitHandle = null;
+        let hitHandle: string | null = null;
 
-        for (const key in handles) {
-          if (Math.hypot(artX - handles[key].x, artY - handles[key].y) < hitTolerance) {
+        for (const [key, handle] of Object.entries(handles)) {
+          if (Math.hypot(artX - handle.x, artY - handle.y) < hitTolerance) {
             hitHandle = key;
             break;
           }
@@ -1183,11 +1182,13 @@ export default function App() {
 
         if (hitHandle) {
           setInteractionMode(hitHandle === 'rot' ? 'rotate' : 'scale_' + hitHandle);
-          dragStart.current = {
-            mouseX: artX,
-            mouseY: artY,
-            layerScale: activeLayer.scale,
-            layerRotation: activeLayer.rotation
+          dragStart.current = { 
+            mouseX: artX, 
+            mouseY: artY, 
+            layerX: activeLayer.x, 
+            layerY: activeLayer.y, 
+            layerScale: activeLayer.scale, 
+            layerRotation: activeLayer.rotation 
           };
           return;
         }
@@ -1198,12 +1199,20 @@ export default function App() {
         setSelectedLayerId(clickedId);
         setInteractionMode('drag');
         const layer = layers.find(l => l.id === clickedId);
-        dragStart.current = {
-          mouseX: artX,
-          mouseY: artY,
-          layerX: layer.x,
-          layerY: layer.y
-        };
+        if (layer) {
+          dragStart.current = { 
+            mouseX: artX, 
+            mouseY: artY, 
+            layerX: layer.x, 
+            layerY: layer.y, 
+            layerScale: layer.scale, 
+            layerRotation: layer.rotation 
+          };
+        }
+      } else {
+        // One finger on empty space pans on touch devices
+        setIsPanning(true);
+        panStart.current = { x: touch.clientX, y: touch.clientY };
       }
     } else if (e.touches.length === 2) {
       setInteractionMode(null);
@@ -1216,60 +1225,73 @@ export default function App() {
       touchStartZoom.current = canvasZoom;
       
       if (selectedLayerId) {
-        touchStartLayerScale.current = layers.find(l => l.id === selectedLayerId).scale;
+        const active = layers.find(l => l.id === selectedLayerId);
+        if (active) {
+          touchStartLayerScale.current = active.scale;
+        }
       }
     }
   };
 
-  const handleCanvasTouchMove = (e) => {
+  const handleCanvasTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     
-    if (e.touches.length === 1 && interactionMode && selectedLayerId) {
+    if (e.touches.length === 1) {
       const touch = e.touches[0];
-      const rect = canvas.getBoundingClientRect();
-      const cx = touch.clientX - rect.left;
-      const cy = touch.clientY - rect.top;
-      
-      const width = rect.width;
-      const height = rect.height;
-      
-      const artX = (cx - width / 2 - panX) / canvasZoom + 256;
-      const artY = (cy - height / 2 - panY) / canvasZoom + 256;
+      if (isPanning) {
+        const dx = touch.clientX - panStart.current.x;
+        const dy = touch.clientY - panStart.current.y;
+        setPanX(prev => prev + dx);
+        setPanY(prev => prev + dy);
+        panStart.current = { x: touch.clientX, y: touch.clientY };
+        return;
+      }
 
-      const activeLayer = layers.find(l => l.id === selectedLayerId);
-      if (!activeLayer) return;
+      if (interactionMode && selectedLayerId) {
+        const rect = canvas.getBoundingClientRect();
+        const cx = touch.clientX - rect.left;
+        const cy = touch.clientY - rect.top;
+        
+        const width = rect.width;
+        const height = rect.height;
+        
+        const artX = (cx - width / 2 - panX) / canvasZoom + 256;
+        const artY = (cy - height / 2 - panY) / canvasZoom + 256;
 
-      if (interactionMode === 'drag') {
-        const dx = artX - dragStart.current.mouseX;
-        const dy = artY - dragStart.current.mouseY;
-        setLayers(prev => prev.map(l => {
-          if (l.id === selectedLayerId) {
-            return {
-              ...l,
-              x: dragStart.current.layerX + dx,
-              y: dragStart.current.layerY + dy
-            };
-          }
-          return l;
-        }));
-      } else if (interactionMode === 'rotate') {
-        const layerCx = 512 / 2 + activeLayer.x;
-        const layerCy = 512 / 2 + activeLayer.y;
-        const angleCurrent = Math.atan2(artY - layerCy, artX - layerCx);
-        const angleStart = Math.atan2(dragStart.current.mouseY - layerCy, dragStart.current.mouseX - layerCx);
-        const angleDiff = (angleCurrent - angleStart) * 180 / Math.PI;
-        setLayers(prev => prev.map(l => l.id === selectedLayerId ? { ...l, rotation: (dragStart.current.layerRotation + angleDiff) % 360 } : l));
-      } else if (interactionMode.startsWith('scale_')) {
-        const layerCx = 512 / 2 + activeLayer.x;
-        const layerCy = 512 / 2 + activeLayer.y;
-        const distCurrent = Math.hypot(artX - layerCx, artY - layerCy);
-        const distStart = Math.hypot(dragStart.current.mouseX - layerCx, dragStart.current.mouseY - layerCy);
-        const scaleRatio = distCurrent / distStart;
-        setLayers(prev => prev.map(l => l.id === selectedLayerId ? { ...l, scale: Math.max(0.1, Math.min(dragStart.current.layerScale * scaleRatio, 4.0)) } : l));
+        const activeLayer = layers.find(l => l.id === selectedLayerId);
+        if (!activeLayer) return;
+
+        if (interactionMode === 'drag') {
+          const dx = artX - dragStart.current.mouseX;
+          const dy = artY - dragStart.current.mouseY;
+          setLayers(prev => prev.map(l => {
+            if (l.id === selectedLayerId) {
+              return {
+                ...l,
+                x: dragStart.current.layerX + dx,
+                y: dragStart.current.layerY + dy
+              };
+            }
+            return l;
+          }));
+        } else if (interactionMode === 'rotate') {
+          const layerCx = 512 / 2 + activeLayer.x;
+          const layerCy = 512 / 2 + activeLayer.y;
+          const angleCurrent = Math.atan2(artY - layerCy, artX - layerCx);
+          const angleStart = Math.atan2(dragStart.current.mouseY - layerCy, dragStart.current.mouseX - layerCx);
+          const angleDiff = (angleCurrent - angleStart) * 180 / Math.PI;
+          setLayers(prev => prev.map(l => l.id === selectedLayerId ? { ...l, rotation: (dragStart.current.layerRotation + angleDiff) % 360 } : l));
+        } else if (interactionMode.startsWith('scale_')) {
+          const layerCx = 512 / 2 + activeLayer.x;
+          const layerCy = 512 / 2 + activeLayer.y;
+          const distCurrent = Math.hypot(artX - layerCx, artY - layerCy);
+          const distStart = Math.hypot(dragStart.current.mouseX - layerCx, dragStart.current.mouseY - layerCy);
+          const scaleRatio = distStart > 0 ? distCurrent / distStart : 1;
+          setLayers(prev => prev.map(l => l.id === selectedLayerId ? { ...l, scale: Math.max(0.1, Math.min(dragStart.current.layerScale * scaleRatio, 4.0)) } : l));
+        }
       }
     } else if (e.touches.length === 2) {
-      e.preventDefault(); 
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
@@ -1295,12 +1317,14 @@ export default function App() {
 
   const handleCanvasTouchEnd = () => {
     setInteractionMode(null);
+    setIsPanning(false);
     touchStartDist.current = 0;
   };
 
-  const moveLayerUp = (id) => {
+  const moveLayerUp = (id: string) => {
     const idx = layers.findIndex(l => l.id === id);
     if (idx === -1 || idx === layers.length - 1) return;
+    pushStateToUndo(layers);
     const newLayers = [...layers];
     const temp = newLayers[idx];
     newLayers[idx] = newLayers[idx + 1];
@@ -1308,9 +1332,10 @@ export default function App() {
     setLayers(newLayers);
   };
 
-  const moveLayerDown = (id) => {
+  const moveLayerDown = (id: string) => {
     const idx = layers.findIndex(l => l.id === id);
     if (idx === -1 || idx === 0) return;
+    pushStateToUndo(layers);
     const newLayers = [...layers];
     const temp = newLayers[idx];
     newLayers[idx] = newLayers[idx - 1];
@@ -1318,10 +1343,11 @@ export default function App() {
     setLayers(newLayers);
   };
 
-  const duplicateLayer = (id) => {
+  const duplicateLayer = (id: string) => {
     const layer = layers.find(l => l.id === id);
     if (!layer) return;
-    const newLayer = {
+    pushStateToUndo(layers);
+    const newLayer: Layer = {
       ...layer,
       id: Date.now().toString(),
       x: layer.x + 20, 
@@ -1335,11 +1361,12 @@ export default function App() {
     showToast('Layer duplicated.');
   };
 
-  const deleteLayer = (id) => {
+  const deleteLayer = (id: string) => {
     if (layers.length <= 1) {
       showToast('At least one layer must remain in workspace!');
       return;
     }
+    pushStateToUndo(layers);
     const newLayers = layers.filter(l => l.id !== id);
     setLayers(newLayers);
     setSelectedLayerId(newLayers[newLayers.length - 1].id);
@@ -1351,13 +1378,14 @@ export default function App() {
     const dataUrl = exportCanvas.toDataURL('image/png');
     const link = document.createElement('a');
     const firstEmoji = layers[0]?.emoji || 'sticker';
-    link.download = `mojisnap_${firstEmoji}_sticker_${exportSize}px.png`;
+    link.download = `smolji_${firstEmoji}_sticker_${exportSize}px.png`;
     link.href = dataUrl;
     link.click();
     showToast('PNG saved!');
   };
 
   const handleCopyToClipboard = async () => {
+    await ensureLayersLoaded(layers, selectedStyle);
     const exportCanvas = drawExportCanvas(exportSize);
     try {
       exportCanvas.toBlob(async (blob) => {
@@ -1372,7 +1400,7 @@ export default function App() {
     }
   };
 
-  const handleUploadImage = async (service) => {
+  const handleUploadImage = async (service: 'imgbb' | 'imgur') => {
     const apiKey = service === 'imgbb' ? apiKeys.imgbb : apiKeys.imgur;
     
     if (!apiKey) {
@@ -1384,6 +1412,7 @@ export default function App() {
     setIsUploading(service);
     setUploadResultUrl('');
 
+    await ensureLayersLoaded(layers, selectedStyle);
     const exportCanvas = drawExportCanvas(exportSize);
     exportCanvas.toBlob(async (blob) => {
       if (!blob) {
@@ -1403,17 +1432,18 @@ export default function App() {
         setUploadResultUrl(uploadedUrl);
         addToHistory(uploadedUrl, service === 'imgbb' ? 'ImgBB' : 'Imgur');
         showToast('Public image URL created!');
-      } catch (err) {
+      } catch (err: unknown) {
         console.error(err);
-        showToast(err.message || 'Error occurred during upload');
+        const msg = err instanceof Error ? err.message : 'Error occurred during upload';
+        showToast(msg);
       } finally {
         setIsUploading('');
       }
     }, 'image/png');
   };
 
-  const addToHistory = (url, host) => {
-    const newEntry = {
+  const addToHistory = (url: string, host: string) => {
+    const newEntry: UploadedHistory = {
       id: Date.now().toString(),
       emoji: layers[0]?.emoji || '🔥',
       style: selectedStyle,
@@ -1423,13 +1453,17 @@ export default function App() {
     };
     const updated = [newEntry, ...uploadHistory].slice(0, 10);
     setUploadHistory(updated);
-    localStorage.setItem('emoji_studio_history', JSON.stringify(updated));
+    try {
+      localStorage.setItem('emoji_studio_history', JSON.stringify(updated));
+    } catch {
+      // storage unavailable
+    }
   };
 
   const handleDownloadZip = async () => {
     setIsZipping(true);
     const zip = new JSZip();
-    const folder = zip.folder(`mojisnap_pack`);
+    const folder = zip.folder(`smolji_pack`);
     
     showToast('Compiling ZIP for all emoji styles...');
     
@@ -1438,6 +1472,7 @@ export default function App() {
       styleCanvas.width = exportSize;
       styleCanvas.height = exportSize;
       const sCtx = styleCanvas.getContext('2d');
+      if (!sCtx) continue;
       const size = exportSize;
       const scaleFactor = size / 512;
       
@@ -1469,7 +1504,8 @@ export default function App() {
       
       // Draw layers with overridden style
       for (const layer of layers) {
-        const imgUrl = getEmojiUrl(layer.emoji, style.id); 
+        if (layer.visible === false) continue;
+        const imgUrl = getEmojiUrl(layer.emoji || '', style.id);
         let img = imageCache.current[imgUrl];
         
         if (!img || img === 'failed') {
@@ -1483,6 +1519,10 @@ export default function App() {
         const cx = (512 / 2 + layer.x) * scaleFactor;
         const cy = (512 / 2 + layer.y) * scaleFactor;
         sCtx.translate(cx, cy);
+
+        if (layer.flipX || layer.flipY) {
+          sCtx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
+        }
         
         if (layer.skewX || layer.skewY) {
           const sx = (layer.skewX || 0) * Math.PI / 180;
@@ -1502,47 +1542,45 @@ export default function App() {
         
         const emojiSize = 256 * layer.scale * scaleFactor;
         
-        if (img && img !== 'failed') {
+        if (img && img !== 'failed' && img !== 'loading') {
           sCtx.drawImage(img, -emojiSize / 2, -emojiSize / 2, emojiSize, emojiSize);
         } else {
           sCtx.textAlign = 'center';
           sCtx.textBaseline = 'middle';
           sCtx.fillStyle = '#ffffff';
           sCtx.font = `${emojiSize * 0.7}px system-ui, Segoe UI`;
-          sCtx.fillText(layer.emoji, 0, 0);
+          sCtx.fillText(layer.emoji || '', 0, 0);
         }
         sCtx.restore();
       }
       
-      const blob = await new Promise((resolve) => styleCanvas.toBlob(resolve, 'image/png'));
-      folder.file(`${style.id}.png`, blob);
+      const blob = await new Promise<Blob | null>((resolve) => styleCanvas.toBlob(resolve, 'image/png'));
+      if (blob && folder) folder.file(`${style.id}.png`, blob);
     }
     
     try {
       const content = await zip.generateAsync({ type: 'blob' });
+      const blobUrl = URL.createObjectURL(content);
       const link = document.createElement('a');
-      link.href = URL.createObjectURL(content);
-      link.download = `mojisnap_sticker_pack.zip`;
+      link.href = blobUrl;
+      link.download = `smolji_sticker_pack.zip`;
       link.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
       showToast('ZIP folder downloaded!');
-    } catch (err) {
+    } catch {
       showToast('Error building ZIP package.');
     } finally {
       setIsZipping(false);
     }
   };
 
-  const handleInputChange = (e) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     
-    // Auto replace completed shortcodes :robot_face: -> 🤖
+    // Auto replace completed shortcodes using O(1) map
     const replaced = val.replace(/:([a-zA-Z0-9_\-+]+):/g, (match, name) => {
-      const list = getGemojiList();
-      const found = list.find(item => 
-        item.names.includes(name.toLowerCase()) || 
-        item.names.some(n => n.replace(/_/g, '-') === name.toLowerCase())
-      );
-      return found ? found.emoji : match;
+      const found = SHORTCODE_MAP.get(name.toLowerCase());
+      return found || match;
     });
 
     setInputText(replaced);
@@ -1550,25 +1588,55 @@ export default function App() {
     // Suggestion box filter
     const caret = getCaretInfo(e.target, replaced);
     if (caret && caret.query.length >= 1) {
-      const list = getGemojiList();
-      const query = caret.query.toLowerCase();
-      
-      const filtered = list.filter(item => {
-        return item.names.some(name => name.includes(query)) ||
-               item.tags.some(tag => tag.includes(query)) ||
-               item.description.toLowerCase().includes(query);
-      }).slice(0, 5);
-      
-      setSuggestions(filtered);
-      setCaretInfo(caret);
-      setSuggestionIndex(0);
+      startTransition(() => {
+        const list = getGemojiList();
+        const query = caret.query.toLowerCase();
+        
+        const filtered = list.filter(item => {
+          return item.names.some(name => name.includes(query)) ||
+                 item.tags.some(tag => tag.includes(query)) ||
+                 item.description.toLowerCase().includes(query);
+        }).slice(0, 5);
+        
+        setSuggestions(filtered);
+        setCaretInfo(caret);
+        setSuggestionIndex(0);
+      });
     } else {
       setSuggestions([]);
       setCaretInfo(null);
     }
   };
 
-  const getCaretInfo = (element, text) => {
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (suggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSuggestionIndex(prev => (prev + 1) % suggestions.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSuggestionIndex(prev => (prev - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        if (suggestions[suggestionIndex]) {
+          insertSuggestion(suggestions[suggestionIndex]);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSuggestions([]);
+        setCaretInfo(null);
+        return;
+      }
+    }
+  };
+
+  const getCaretInfo = (element: HTMLTextAreaElement, text: string) => {
     const selectionEnd = element.selectionEnd;
     const textBeforeCursor = text.slice(0, selectionEnd);
     const lastColonIndex = textBeforeCursor.lastIndexOf(':');
@@ -1586,7 +1654,7 @@ export default function App() {
     return null;
   };
 
-  const insertSuggestion = (emojiItem) => {
+  const insertSuggestion = (emojiItem: SuggestionItem) => {
     if (!caretInfo) return;
     const text = inputText;
     const before = text.slice(0, caretInfo.startIndex);
@@ -1613,7 +1681,7 @@ export default function App() {
   return (
     <div className="w-screen h-screen overflow-hidden relative bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col font-sans transition-colors duration-200 select-none">
       
-      {/* 1. Full-screen interactive canvas at bottom level */}
+      {/* 1. Full-screen interactive canvas */}
       <canvas 
         ref={canvasRef} 
         onMouseDown={handleCanvasMouseDown}
@@ -1634,42 +1702,64 @@ export default function App() {
       <header className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between gap-4 pointer-events-none">
         
         {/* Logo block */}
-        <div className="flex items-center gap-3 bg-white/80 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 px-4 py-3 rounded-2xl shadow-xl pointer-events-auto">
-          <div className="flex items-center gap-2">
-            <img src="/logo.jpg" alt="Logo" className="w-8 h-8 rounded-lg object-cover" />
+        <div className="flex items-center gap-3 bg-white/85 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 px-4 py-2.5 rounded-2xl shadow-xl pointer-events-auto">
+          <div className="flex items-center gap-2.5">
+            <img src="/logo.jpg" alt="Logo" className="w-8 h-8 rounded-xl object-cover ring-1 ring-zinc-200/80 dark:ring-zinc-700/80 shadow-sm" />
             <div>
-              <h1 className="text-sm font-black text-yellow-600 dark:text-yellow-400 leading-none">MojiSnap</h1>
-              <p className="text-[8px] text-zinc-500 uppercase tracking-widest mt-0.5 font-bold">Studio</p>
+              <h1 className="text-sm font-black tracking-tight text-yellow-600 dark:text-yellow-400 leading-none">Smolji</h1>
+              <p className="text-[9px] text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-0.5 font-bold">Studio</p>
             </div>
           </div>
         </div>
 
-        {/* Center zoom controls */}
-        <div className="flex items-center gap-1.5 bg-white/80 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 p-1.5 rounded-2xl shadow-xl pointer-events-auto">
+        {/* Center zoom & history controls */}
+        <div className="flex items-center gap-1.5 bg-white/85 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 p-1.5 rounded-2xl shadow-xl pointer-events-auto">
           <button
+            type="button"
+            onClick={handleUndo}
+            disabled={undoStack.length === 0}
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30 cursor-pointer transition-colors"
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo2 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={handleRedo}
+            disabled={redoStack.length === 0}
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30 cursor-pointer transition-colors"
+            title="Redo (Ctrl+Y)"
+          >
+            <Redo2 className="w-3.5 h-3.5" />
+          </button>
+          <span className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-800 mx-0.5" />
+          <button
+            type="button"
             onClick={() => setCanvasZoom(prev => Math.max(prev - 0.15, 0.25))}
-            className="p-1.5 hover:bg-zinc-150 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-colors"
             title="Zoom Out"
           >
             <Minus className="w-3.5 h-3.5" />
           </button>
-          <span className="text-[10px] font-mono text-zinc-700 dark:text-zinc-300 px-1 text-center min-w-10">
+          <span className="text-[11px] font-mono font-medium text-zinc-700 dark:text-zinc-300 px-1.5 text-center min-w-11 tabular-nums">
             {Math.round(canvasZoom * 100)}%
           </span>
           <button
+            type="button"
             onClick={() => setCanvasZoom(prev => Math.min(prev + 0.15, 6.0))}
-            className="p-1.5 hover:bg-zinc-150 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-colors"
             title="Zoom In"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
           <button
+            type="button"
             onClick={() => {
               setPanX(0);
               setPanY(0);
               setCanvasZoom(0.85);
             }}
-            className="p-1.5 hover:bg-zinc-150 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border-l border-zinc-200 dark:border-zinc-800 pl-2 ml-0.5"
+            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border-l border-zinc-200 dark:border-zinc-800 pl-2 ml-0.5 cursor-pointer transition-colors"
             title="Recenter view"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -1677,10 +1767,11 @@ export default function App() {
         </div>
 
         {/* Right action controls */}
-        <div className="flex items-center gap-2 bg-white/80 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 p-1.5 rounded-2xl shadow-xl pointer-events-auto">
+        <div className="flex items-center gap-2 bg-white/85 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 p-1.5 rounded-2xl shadow-xl pointer-events-auto">
           <button
+            type="button"
             onClick={() => setLeftPanelOpen(prev => !prev)}
-            className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
               leftPanelOpen 
                 ? 'border-yellow-500/25 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' 
                 : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
@@ -1688,12 +1779,13 @@ export default function App() {
             title="Toggle Asset Library Panel"
           >
             <Smile className="w-4 h-4" />
-            <span className="hidden lg:inline text-[10px]">Library</span>
+            <span className="hidden lg:inline text-[11px]">Library</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setRightPanelOpen(prev => !prev)}
-            className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
               rightPanelOpen 
                 ? 'border-yellow-500/25 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' 
                 : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
@@ -1701,37 +1793,41 @@ export default function App() {
             title="Toggle Layer Properties Panel"
           >
             <Layers className="w-4 h-4" />
-            <span className="hidden lg:inline text-[10px]">Properties</span>
+            <span className="hidden lg:inline text-[11px]">Properties</span>
           </button>
 
           <button
+            type="button"
             onClick={handleCopyToClipboard}
-            className="p-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white rounded-xl text-xs font-bold transition-all border border-zinc-200 dark:border-zinc-800 flex items-center gap-1"
+            className="p-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white rounded-xl text-xs font-bold transition-all border border-zinc-200 dark:border-zinc-800 flex items-center gap-1 cursor-pointer"
             title="Copy PNG sticker image to clipboard"
           >
             <Copy className="w-4 h-4" />
           </button>
           
           <button
+            type="button"
             onClick={handleDownloadPNG}
-            className="px-3 py-2 bg-yellow-500 hover:bg-yellow-400 text-zinc-950 rounded-xl text-xs font-black transition-all flex items-center gap-1 shadow-md"
+            className="px-3.5 py-2 bg-yellow-500 hover:bg-yellow-400 text-zinc-950 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
             title="Download PNG sticker file"
           >
             <Download className="w-4 h-4" />
-            <span className="hidden sm:inline text-[10px]">Save PNG</span>
+            <span className="hidden sm:inline text-[11px]">Save PNG</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-            className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-150 dark:hover:bg-zinc-800 transition-colors"
+            className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             title="Toggle theme"
           >
             {theme === 'dark' ? <Sun className="w-4 h-4 text-yellow-400" /> : <Moon className="w-4 h-4 text-zinc-700" />}
           </button>
 
           <button
+            type="button"
             onClick={() => setSettingsOpen(true)}
-            className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-150 dark:hover:bg-zinc-800 transition-colors"
+            className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
             title="Settings"
           >
             <Settings className="w-4 h-4" />
@@ -1746,12 +1842,23 @@ export default function App() {
         }`}
       >
         <div className="w-full h-full bg-white/80 dark:bg-zinc-950/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/60 rounded-2xl shadow-2xl p-4 flex flex-col gap-4 overflow-y-auto pointer-events-auto">
-          <div className="border-b border-zinc-200 dark:border-zinc-900 pb-3 flex items-center justify-between shrink-0">
-            <h2 className="text-xs font-black uppercase tracking-wider text-yellow-600 dark:text-yellow-400 flex items-center gap-2">
+          <div className="border-b border-zinc-200 dark:border-zinc-900 pb-3 flex items-center justify-between gap-2 shrink-0">
+            <h2 className="text-xs font-black uppercase tracking-wider text-yellow-600 dark:text-yellow-400 flex items-center gap-2 shrink-0">
               <Smile className="w-4 h-4" />
-               Studio Assets
+              Studio Assets
             </h2>
-            <span className="text-[9px] bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 px-2 py-0.5 rounded font-bold uppercase">Library</span>
+            <div className="w-36 shrink-0" title="Default Style for new Emojis">
+              <StudioSelect<string>
+                id="default-style"
+                ariaLabel="Default Style for new Emojis"
+                value={selectedStyle}
+                options={EMOJI_STYLES.map((s) => ({
+                  value: s.id,
+                  label: s.name,
+                }))}
+                onChange={(val) => setSelectedStyle(val)}
+              />
+            </div>
           </div>
 
           {/* Autocomplete input */}
@@ -1763,7 +1870,7 @@ export default function App() {
               placeholder="Search emoji by shortcode (e.g. :smile:)..."
               value={inputText}
               onChange={handleInputChange}
-              onKeyDown={handleInputChange} 
+              onKeyDown={handleTextareaKeyDown} 
             />
             
             {/* Suggestions drop DOWN */}
@@ -1813,7 +1920,7 @@ export default function App() {
           <div className="flex-1 flex flex-col min-h-0">
             <span className="block text-[9px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-1.5 shrink-0">Library Quick Emojis</span>
             <div className="grid grid-cols-6 gap-1.5 p-2 bg-zinc-100/30 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-900 rounded-xl overflow-y-auto flex-1 min-h-0">
-              {POPULAR_EMOJIS.map((emoji, index) => (
+              {ALL_POPULAR_EMOJIS.map((emoji, index) => (
                 <button
                   key={index}
                   onClick={() => addLayer(emoji)}
@@ -1895,7 +2002,7 @@ export default function App() {
                     </button>
                     <button
                       onClick={() => deleteLayer(layer.id)}
-                      className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-zinc-500 hover:text-red-505"
+                      className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-zinc-500 hover:text-red-500"
                       title="Delete Layer"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -1909,106 +2016,113 @@ export default function App() {
           {/* Active Layer Transformations */}
           {activeLayer ? (
             <div className="border-t border-zinc-200 dark:border-zinc-900 pt-3 flex flex-col gap-3 shrink-0">
-              <span className="text-[9px] font-bold text-yellow-600 dark:text-yellow-400 uppercase tracking-wider block">Layer Properties</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-yellow-600 dark:text-yellow-400 uppercase tracking-wider block">Layer Properties</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      pushStateToUndo(layers);
+                      setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, flipX: !l.flipX } : l));
+                    }}
+                    className={`p-1 rounded border text-[9px] flex items-center gap-0.5 ${
+                      activeLayer.flipX 
+                        ? 'bg-yellow-500 text-zinc-950 border-yellow-500 font-bold' 
+                        : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
+                    }`}
+                    title="Flip Horizontal"
+                  >
+                    <FlipHorizontal className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      pushStateToUndo(layers);
+                      setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, flipY: !l.flipY } : l));
+                    }}
+                    className={`p-1 rounded border text-[9px] flex items-center gap-0.5 ${
+                      activeLayer.flipY 
+                        ? 'bg-yellow-500 text-zinc-950 border-yellow-500 font-bold' 
+                        : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
+                    }`}
+                    title="Flip Vertical"
+                  >
+                    <FlipVertical className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
               
               {/* Visual Style Selection */}
-              <div className="space-y-1">
-                <label htmlFor="layer-style" className="block text-[8px] text-zinc-505 dark:text-zinc-400 font-semibold uppercase tracking-wider">Visual Style</label>
-                <select
+              <div className="space-y-1.5">
+                <label htmlFor="layer-style" className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-semibold uppercase tracking-wider">Visual Style</label>
+                <StudioSelect
                   id="layer-style"
+                  ariaLabel="Visual Style"
                   value={activeLayer.style || selectedStyle}
-                  onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, style: e.target.value } : l))}
-                  className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200 text-xs px-2.5 py-1.5 focus:border-yellow-500 focus:outline-none"
-                >
-                  {EMOJI_STYLES.map(s => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.format})</option>
-                  ))}
-                </select>
+                  options={EMOJI_STYLES.map(s => ({
+                    value: s.id,
+                    label: s.name,
+                    badge: s.format,
+                  }))}
+                  onChange={(styleId) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, style: styleId } : l))}
+                />
               </div>
 
               {/* Sliders grid */}
-              <div className="grid grid-cols-2 gap-3 text-[10px]">
-                {/* Scale */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Scale</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{Math.round(activeLayer.scale * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="2.5"
-                    step="0.05"
-                    value={activeLayer.scale}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, scale: parseFloat(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+                <StudioSlider
+                  label="Scale"
+                  valueDisplay={`${Math.round(activeLayer.scale * 100)}%`}
+                  min={0.1}
+                  max={2.5}
+                  step={0.05}
+                  value={activeLayer.scale}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, scale: val } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, scale: 0.85 } : l))}
+                />
 
-                {/* Rotation */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Rotation</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{activeLayer.rotation}°</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-180"
-                    max="180"
-                    value={activeLayer.rotation}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, rotation: parseInt(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+                <StudioSlider
+                  label="Rotation"
+                  valueDisplay={`${activeLayer.rotation}°`}
+                  min={-180}
+                  max={180}
+                  step={1}
+                  value={activeLayer.rotation}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, rotation: Math.round(val) } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, rotation: 0 } : l))}
+                />
 
-                {/* Skew X */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Skew X</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{activeLayer.skewX || 0}°</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-45"
-                    max="45"
-                    value={activeLayer.skewX || 0}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewX: parseInt(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+                <StudioSlider
+                  label="Skew X"
+                  valueDisplay={`${activeLayer.skewX || 0}°`}
+                  min={-45}
+                  max={45}
+                  step={1}
+                  value={activeLayer.skewX || 0}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewX: Math.round(val) } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewX: 0 } : l))}
+                />
 
-                {/* Skew Y */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Skew Y</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{activeLayer.skewY || 0}°</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-45"
-                    max="45"
-                    value={activeLayer.skewY || 0}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewY: parseInt(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+                <StudioSlider
+                  label="Skew Y"
+                  valueDisplay={`${activeLayer.skewY || 0}°`}
+                  min={-45}
+                  max={45}
+                  step={1}
+                  value={activeLayer.skewY || 0}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewY: Math.round(val) } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, skewY: 0 } : l))}
+                />
 
-                {/* Opacity */}
-                <div className="space-y-1 col-span-2">
-                  <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                    <span>Opacity</span>
-                    <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{Math.round((activeLayer.opacity !== undefined ? activeLayer.opacity : 1) * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={activeLayer.opacity !== undefined ? activeLayer.opacity : 1}
-                    onChange={(e) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, opacity: parseFloat(e.target.value) } : l))}
-                    className="w-full accent-yellow-500 h-1 rounded"
-                  />
-                </div>
+                <StudioSlider
+                  label="Opacity"
+                  valueDisplay={`${Math.round((activeLayer.opacity !== undefined ? activeLayer.opacity : 1) * 100)}%`}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={activeLayer.opacity !== undefined ? activeLayer.opacity : 1}
+                  onChange={(val) => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, opacity: val } : l))}
+                  onReset={() => setLayers(prev => prev.map(l => l.id === activeLayer.id ? { ...l, opacity: 1 } : l))}
+                  className="col-span-2"
+                />
               </div>
 
               {/* Style Explorer variations for selected layer */}
@@ -2016,7 +2130,7 @@ export default function App() {
                 <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest block">Style Variations Explorer</span>
                 <div className="grid grid-cols-4 gap-1.5 max-h-24 overflow-y-auto p-1 border border-zinc-200 dark:border-zinc-800 rounded-lg">
                   {EMOJI_STYLES.map(style => {
-                    const url = getEmojiUrl(activeLayer.emoji, style.id);
+                    const url = getEmojiUrl(activeLayer.emoji || '', style.id);
                     const isActive = activeLayer.style === style.id;
                     return (
                       <div
@@ -2026,12 +2140,12 @@ export default function App() {
                           isActive ? 'border-yellow-500 bg-yellow-500/10' : 'border-zinc-200 dark:border-zinc-800 bg-zinc-100/50 dark:bg-zinc-900/50 hover:border-zinc-300 dark:hover:border-zinc-700'
                         }`}
                       >
-                        <img src={url} alt={style.name} className="w-5 h-5 object-contain" />
+                        <img src={url} alt={style.name} loading="lazy" className="w-5 h-5 object-contain" />
                         <span className="text-[5px] text-zinc-500 text-center truncate w-full font-mono mt-0.5">{style.name}</span>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            addLayerWithStyle(activeLayer.emoji, style.id);
+                            addLayerWithStyle(activeLayer.emoji || '', style.id);
                           }}
                           className="absolute -top-1 -right-1 bg-yellow-500 hover:bg-yellow-400 text-zinc-950 w-3 h-3 rounded-full flex items-center justify-center text-[8px] font-black opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
                           title="Spawn new Layer in this style"
@@ -2077,15 +2191,11 @@ export default function App() {
             </div>
 
             {bgType === 'solid' && (
-              <div className="flex items-center justify-between p-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
-                <span className="text-[10px] text-zinc-500 dark:text-zinc-400">Solid Color</span>
-                <input
-                  type="color"
-                  value={solidBg}
-                  onChange={(e) => setSolidBg(e.target.value)}
-                  className="w-7 h-5 rounded bg-transparent cursor-pointer border border-zinc-300 dark:border-zinc-700"
-                />
-              </div>
+              <StudioColorPicker
+                label="Solid Color"
+                value={solidBg}
+                onChange={setSolidBg}
+              />
             )}
 
             {bgType === 'gradient' && (
@@ -2093,8 +2203,9 @@ export default function App() {
                 {GRADIENTS.slice(1).map((grad, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => setSelectedGradient(grad)}
-                    className={`h-5 rounded border transition-all ${selectedGradient.name === grad.name ? 'border-yellow-500 scale-105' : 'border-transparent'} ${grad.preview}`}
+                    className={`h-5 rounded border transition-all cursor-pointer ${selectedGradient.name === grad.name ? 'border-yellow-500 scale-105' : 'border-transparent'} ${grad.preview}`}
                     title={grad.name}
                   />
                 ))}
@@ -2102,35 +2213,101 @@ export default function App() {
             )}
 
             {/* Radius and Export Dimensions */}
-            <div className="grid grid-cols-2 gap-3 text-[10px]">
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                  <span>Corners</span>
-                  <span className="font-mono font-bold text-yellow-600 dark:text-yellow-400">{borderRadius}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={borderRadius}
-                  onChange={(e) => setBorderRadius(parseInt(e.target.value))}
-                  className="w-full accent-yellow-500 h-1 rounded"
-                />
-              </div>
+            <div className="space-y-3">
+              <StudioSlider
+                label="Corners"
+                valueDisplay={`${borderRadius}%`}
+                min={0}
+                max={100}
+                step={1}
+                value={borderRadius}
+                onChange={(val) => setBorderRadius(Math.round(val))}
+                onReset={() => setBorderRadius(25)}
+              />
 
-              <div className="space-y-1">
-                <span className="text-zinc-505 dark:text-zinc-400 block mb-0.5">Export Size</span>
-                <select
-                  value={exportSize}
-                  onChange={(e) => setExportSize(parseInt(e.target.value))}
-                  className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-200 text-[10px] px-2 py-1 focus:outline-none focus:border-yellow-500"
-                >
-                  <option value="128">128 x 128 px</option>
-                  <option value="256">256 x 256 px</option>
-                  <option value="512">512 x 512 px</option>
-                  <option value="1024">1024 x 1024 px</option>
-                </select>
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400 block">Export Size</span>
+                <div className="grid grid-cols-4 gap-1 bg-zinc-100 dark:bg-zinc-900 p-1 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                  {[128, 256, 512, 1024].map((sizeOption) => {
+                    const isActive = exportSize === sizeOption;
+                    return (
+                      <button
+                        key={sizeOption}
+                        type="button"
+                        onClick={() => setExportSize(sizeOption)}
+                        className={`py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer ${
+                          isActive
+                            ? 'bg-yellow-500 text-zinc-950 shadow-sm'
+                            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+                        }`}
+                      >
+                        {sizeOption}px
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+            </div>
+
+            {/* Shadow Controls */}
+            <div className="space-y-2 p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-zinc-600 dark:text-zinc-300">Drop Shadow</span>
+                <button
+                  type="button"
+                  onClick={() => setShadowEnabled(prev => !prev)}
+                  className={`text-[10px] px-2.5 py-0.5 rounded-lg font-bold transition-colors cursor-pointer ${
+                    shadowEnabled 
+                      ? 'bg-yellow-500 text-zinc-950' 
+                      : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'
+                  }`}
+                >
+                  {shadowEnabled ? 'On' : 'Off'}
+                </button>
+              </div>
+              {shadowEnabled && (
+                <div className="space-y-2.5 pt-1">
+                  <StudioSlider
+                    label="Blur"
+                    valueDisplay={`${shadowBlur}px`}
+                    min={0}
+                    max={50}
+                    step={1}
+                    value={shadowBlur}
+                    onChange={(val) => setShadowBlur(Math.round(val))}
+                    onReset={() => setShadowBlur(15)}
+                  />
+                  <div>
+                    <div className="flex justify-between text-zinc-500 dark:text-zinc-400 text-[10px] font-medium mb-1">
+                      <span>Intensity</span>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setShadowColor('rgba(0, 0, 0, 0.45)')}
+                        className={`flex-1 py-1 rounded-lg border text-[10px] font-bold transition-colors cursor-pointer ${
+                          shadowColor === 'rgba(0, 0, 0, 0.45)' 
+                            ? 'border-yellow-500 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' 
+                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
+                        }`}
+                      >
+                        Soft
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShadowColor('rgba(0, 0, 0, 0.85)')}
+                        className={`flex-1 py-1 rounded-lg border text-[10px] font-bold transition-colors cursor-pointer ${
+                          shadowColor === 'rgba(0, 0, 0, 0.85)' 
+                            ? 'border-yellow-500 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' 
+                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
+                        }`}
+                      >
+                        Deep
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* ZIP download and Cloud Link generator */}
@@ -2206,7 +2383,7 @@ export default function App() {
       {/* 6. Settings Credentials Modal */}
       {settingsOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl max-w-md w-full shadow-2xl p-6 relative animate-zoom-in pointer-events-auto">
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl max-w-md w-full shadow-2xl p-6 relative animate-zoom-in pointer-events-auto max-h-[90vh] overflow-y-auto">
             <button
               onClick={() => setSettingsOpen(false)}
               className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
@@ -2219,7 +2396,7 @@ export default function App() {
               API Settings
             </h2>
             
-            <form onSubmit={(e) => { e.preventDefault(); setSettingsOpen(false); showToast('API Keys saved successfully!'); }} className="space-y-4">
+            <form onSubmit={handleSaveSettings} className="space-y-4">
               <div className="bg-zinc-100 dark:bg-zinc-950 p-3 border border-zinc-200 dark:border-zinc-800 rounded-xl">
                 <h3 className="text-xs font-bold text-zinc-500 flex items-center gap-1 uppercase tracking-wider mb-1">
                   <Info className="w-3.5 h-3.5" /> Direct URLs Integration
@@ -2230,28 +2407,103 @@ export default function App() {
               </div>
 
               <div>
-                <label htmlFor="settings-imgbb-key" className="block text-[10px] font-bold text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-2">ImgBB API Key</label>
-                <input
-                  id="settings-imgbb-key"
-                  type="password"
-                  value={apiKeys.imgbb}
-                  onChange={(e) => setApiKeys({ ...apiKeys, imgbb: e.target.value })}
-                  className="w-full rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-yellow-500 px-4 py-2.5 text-zinc-800 dark:text-white text-xs"
-                  placeholder="Enter ImgBB API key..."
-                />
+                <label htmlFor="settings-imgbb-key" className="block text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">ImgBB API Key</label>
+                <div className="relative">
+                  <input
+                    id="settings-imgbb-key"
+                    type={showImgbbKey ? 'text' : 'password'}
+                    value={apiKeys.imgbb}
+                    onChange={(e) => setApiKeys({ ...apiKeys, imgbb: e.target.value })}
+                    className="w-full rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-yellow-500 focus:outline-none pl-4 pr-10 py-2.5 text-zinc-800 dark:text-white text-xs"
+                    placeholder="Enter ImgBB API key..."
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowImgbbKey(prev => !prev)}
+                    aria-label={showImgbbKey ? 'Hide ImgBB API Key' : 'Show ImgBB API Key'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 cursor-pointer"
+                  >
+                    {showImgbbKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
-                <label htmlFor="settings-imgur-id" className="block text-[10px] font-bold text-zinc-400 dark:text-zinc-400 uppercase tracking-wider mb-2">Imgur Client ID</label>
-                <input
-                  id="settings-imgur-id"
-                  type="password"
-                  value={apiKeys.imgur}
-                  onChange={(e) => setApiKeys({ ...apiKeys, imgur: e.target.value })}
-                  className="w-full rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-yellow-500 px-4 py-2.5 text-zinc-800 dark:text-white text-xs"
-                  placeholder="Enter Imgur Client ID..."
-                />
+                <label htmlFor="settings-imgur-id" className="block text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Imgur Client ID</label>
+                <div className="relative">
+                  <input
+                    id="settings-imgur-id"
+                    type={showImgurId ? 'text' : 'password'}
+                    value={apiKeys.imgur}
+                    onChange={(e) => setApiKeys({ ...apiKeys, imgur: e.target.value })}
+                    className="w-full rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-yellow-500 focus:outline-none pl-4 pr-10 py-2.5 text-zinc-800 dark:text-white text-xs"
+                    placeholder="Enter Imgur Client ID..."
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowImgurId(prev => !prev)}
+                    aria-label={showImgurId ? 'Hide Imgur Client ID' : 'Show Imgur Client ID'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 cursor-pointer"
+                  >
+                    {showImgurId ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
+
+              {/* Upload History List */}
+              {uploadHistory.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                      Recent Uploads ({uploadHistory.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleClearHistory}
+                      className="text-[10px] text-red-500 hover:text-red-400 flex items-center gap-1 cursor-pointer"
+                      title="Clear Upload History"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Clear History</span>
+                    </button>
+                  </div>
+                  <div className="max-h-32 overflow-y-auto space-y-1.5 p-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                    {uploadHistory.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between p-1.5 bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 text-xs"
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-sm shrink-0">{item.emoji}</span>
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-[8px] text-zinc-400 font-mono">{item.host} • {item.date}</span>
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[9px] text-yellow-600 dark:text-yellow-400 hover:underline truncate max-w-[180px] flex items-center gap-0.5"
+                            >
+                              <span>{item.url}</span>
+                              <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                            </a>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(item.url);
+                            showToast('Link copied!');
+                          }}
+                          className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-zinc-500 shrink-0"
+                          title="Copy URL"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button
@@ -2283,32 +2535,32 @@ export default function App() {
           {contextMenu.layerId ? (
             <>
               <button 
-                onClick={() => { moveLayerUp(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
+                onClick={() => { if (contextMenu.layerId) moveLayerUp(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
                 className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white flex items-center gap-2"
               >
                 <ArrowUp className="w-3.5 h-3.5 text-yellow-500" /> Bring Forward
               </button>
               <button 
-                onClick={() => { moveLayerDown(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
+                onClick={() => { if (contextMenu.layerId) moveLayerDown(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
                 className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white flex items-center gap-2"
               >
                 <ArrowDown className="w-3.5 h-3.5 text-yellow-500" /> Send Backward
               </button>
               <button 
-                onClick={() => { duplicateLayer(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
+                onClick={() => { if (contextMenu.layerId) duplicateLayer(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
                 className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white flex items-center gap-2"
               >
                 <Copy className="w-3.5 h-3.5 text-yellow-500" /> Duplicate Layer
               </button>
               <button 
-                onClick={() => { handleCopyLayer(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
+                onClick={() => { if (contextMenu.layerId) handleCopyLayer(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
                 className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white flex items-center gap-2"
               >
                 <Scissors className="w-3.5 h-3.5 text-yellow-500" /> Copy Layer Settings
               </button>
               <button 
-                onClick={() => { deleteLayer(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
-                className="w-full text-left px-3 py-1.5 text-red-500 hover:bg-red-950/10 hover:text-red-400 border-t border-zinc-150 dark:border-zinc-900 mt-1 flex items-center gap-2"
+                onClick={() => { if (contextMenu.layerId) deleteLayer(contextMenu.layerId); setContextMenu(prev => ({ ...prev, visible: false })); }} 
+                className="w-full text-left px-3 py-1.5 text-red-500 hover:bg-red-950/10 hover:text-red-400 border-t border-zinc-200 dark:border-zinc-900 mt-1 flex items-center gap-2"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Delete Layer
               </button>
@@ -2324,7 +2576,7 @@ export default function App() {
               </button>
               <button 
                 onClick={() => { setPanX(0); setPanY(0); setCanvasZoom(0.85); setContextMenu(prev => ({ ...prev, visible: false })); }} 
-                className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white border-t border-zinc-150 dark:border-zinc-900 mt-1 flex items-center gap-2"
+                className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 hover:text-zinc-900 dark:hover:text-white border-t border-zinc-200 dark:border-zinc-900 mt-1 flex items-center gap-2"
               >
                 <RefreshCw className="w-3.5 h-3.5 text-yellow-500" /> Reset Viewport
               </button>
