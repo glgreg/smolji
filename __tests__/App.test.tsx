@@ -469,4 +469,34 @@ describe('App Component (Smolji Studio)', () => {
       expect(screen.getByDisplayValue('https://i.imgur.com/mock.png')).toBeTruthy();
     });
   });
+
+  it('supports layer visibility toggling, catalog category & keyword filtering, and overview link', () => {
+    render(<App />);
+
+    // Brand link back to landing page
+    const overviewLink = screen.getByTitle('Back to Smolji overview');
+    expect(overviewLink.getAttribute('href')).toBe('/');
+
+    // Toggle layer visibility on and off
+    const hideBtn = screen.getByRole('button', { name: 'Hide Layer 1' });
+    fireEvent.click(hideBtn);
+    expect(screen.getByText('Hidden')).toBeTruthy();
+    const showBtn = screen.getByRole('button', { name: 'Show Layer 1' });
+    fireEvent.click(showBtn);
+    expect(screen.queryByText('Hidden')).toBeNull();
+
+    // Filter quick emoji library by category pill
+    fireEvent.click(screen.getByRole('button', { name: 'Hands' }));
+    expect(screen.getByTitle('Add 👍 layer')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+
+    // Filter quick emoji library by keyword input
+    const searchInput = screen.getByPlaceholderText(/Filter by keyword/i) as HTMLInputElement;
+    fireEvent.change(searchInput, { target: { value: 'rocket' } });
+    expect(screen.getAllByTitle('Add 🚀 layer').length).toBeGreaterThanOrEqual(1);
+
+    fireEvent.change(searchInput, { target: { value: 'zzznomatch999' } });
+    expect(screen.getByText('No matching emojis found.')).toBeTruthy();
+  });
 });
+

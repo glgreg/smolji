@@ -16,15 +16,16 @@ export const EMOJI_STYLES = [
 ];
 
 export const GRADIENTS = [
-  { name: 'Transparent', value: 'transparent', preview: 'bg-zinc-800 border border-zinc-700' },
-  { name: 'Neon Aurora', value: 'linear-gradient(135deg, #a855f7, #6366f1, #3b82f6)', preview: 'bg-gradient-to-r from-purple-500 via-indigo-500 to-blue-500' },
-  { name: 'Warm Sunset', value: 'linear-gradient(135deg, #f59e0b, #ef4444, #ec4899)', preview: 'bg-gradient-to-r from-amber-500 via-red-500 to-pink-500' },
-  { name: 'Glacier Blue', value: 'linear-gradient(135deg, #0ea5e9, #2563eb, #1d4ed8)', preview: 'bg-gradient-to-r from-sky-500 via-blue-600 to-blue-800' },
-  { name: 'Cyberpunk', value: 'linear-gradient(135deg, #f43f5e, #d946ef, #06b6d4)', preview: 'bg-gradient-to-r from-rose-500 via-fuchsia-500 to-cyan-500' },
-  { name: 'Dark Space', value: 'linear-gradient(135deg, #1e1b4b, #111827, #09090b)', preview: 'bg-gradient-to-r from-indigo-950 via-zinc-900 to-zinc-950' },
-  { name: 'Emerald Forest', value: 'linear-gradient(135deg, #34d399, #059669, #064e3b)', preview: 'bg-gradient-to-r from-emerald-400 via-emerald-600 to-emerald-900' },
-  { name: 'Soft Peach', value: 'linear-gradient(135deg, #fed7aa, #fdba74, #f97316)', preview: 'bg-gradient-to-r from-orange-200 via-orange-300 to-orange-500' },
-  { name: 'Cosmic Dust', value: 'linear-gradient(135deg, #312e81, #581c87, #831843)', preview: 'bg-gradient-to-r from-indigo-900 via-purple-900 to-pink-900' }
+  { name: 'Transparent', value: 'transparent', preview: 'bg-stone-800 border border-stone-700' },
+  { name: 'Tangerine Press', value: 'linear-gradient(135deg, #fb923c, #e04f26, #b93815)', preview: 'bg-gradient-to-br from-orange-400 via-orange-600 to-red-700' },
+  { name: 'Warm Sunset', value: 'linear-gradient(135deg, #f59e0b, #ef4444, #ec4899)', preview: 'bg-gradient-to-br from-amber-500 via-red-500 to-pink-500' },
+  { name: 'Paper Peach', value: 'linear-gradient(135deg, #fed7aa, #fdba74, #ea580c)', preview: 'bg-gradient-to-br from-orange-200 via-orange-300 to-orange-600' },
+  { name: 'Botanical Sage', value: 'linear-gradient(135deg, #6ee7b7, #2d6a4f, #1b4332)', preview: 'bg-gradient-to-br from-emerald-300 via-emerald-800 to-emerald-950' },
+  { name: 'Glacier Cobalt', value: 'linear-gradient(135deg, #38bdf8, #2563eb, #1e3a8a)', preview: 'bg-gradient-to-br from-sky-400 via-blue-600 to-blue-900' },
+  { name: 'Espresso Ink', value: 'linear-gradient(135deg, #57534e, #292524, #1c1917)', preview: 'bg-gradient-to-br from-stone-600 via-stone-800 to-stone-950' },
+  { name: 'Marigold Honey', value: 'linear-gradient(135deg, #fde68a, #f59e0b, #b45309)', preview: 'bg-gradient-to-br from-amber-200 via-amber-500 to-amber-700' },
+  { name: 'Cyberpunk', value: 'linear-gradient(135deg, #f43f5e, #d946ef, #06b6d4)', preview: 'bg-gradient-to-br from-rose-500 via-fuchsia-500 to-cyan-500' },
+  { name: 'Nordic Slate', value: 'linear-gradient(135deg, #475569, #1e293b, #0f172a)', preview: 'bg-gradient-to-br from-slate-600 via-slate-800 to-slate-950' }
 ];
 
 export const POPULAR_EMOJIS = {

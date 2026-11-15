@@ -1,52 +1,343 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
-body {
-  font-family: 'Outfit', sans-serif !important;
+@theme inline {
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
 }
 
-code, pre, .font-mono {
-  font-family: 'JetBrains Mono', monospace !important;
+:root {
+  color-scheme: light dark;
+
+  --surface-page-light: #f6f2ea;
+  --surface-page-dark: #161513;
+  --surface-card-light: #fdfbf7;
+  --surface-card-dark: #1f1d1a;
+  --surface-well-light: #ede7dc;
+  --surface-well-dark: #292622;
+
+  --ink-primary-light: #1b1917;
+  --ink-primary-dark: #f4efe6;
+  --ink-muted-light: #5b534b;
+  --ink-muted-dark: #b8afa4;
+
+  --border-subtle-light: #d8d0c3;
+  --border-subtle-dark: #3a352f;
+  --border-control-light: #8f8578;
+  --border-control-dark: #756c61;
+
+  --accent-ink-light: #b93815;
+  --accent-ink-dark: #f06a43;
+  --accent-fill-light: #c23e1a;
+  --accent-fill-dark: #c23e1a;
+
+  --scrollbar-track-light: #ede7dc;
+  --scrollbar-track-dark: #1f1d1a;
+  --scrollbar-thumb-light: #8f8578;
+  --scrollbar-thumb-dark: #756c61;
+
+  --surface-page: var(--surface-page-light);
+  --surface-card: var(--surface-card-light);
+  --surface-well: var(--surface-well-light);
+  --ink-primary: var(--ink-primary-light);
+  --ink-muted: var(--ink-muted-light);
+  --border-subtle: var(--border-subtle-light);
+  --border-control: var(--border-control-light);
+  --accent-ink: var(--accent-ink-light);
+  --scrollbar-track: var(--scrollbar-track-light);
+  --scrollbar-thumb: var(--scrollbar-thumb-light);
+
+  @media (prefers-color-scheme: dark) {
+    --surface-page: var(--surface-page-dark);
+    --surface-card: var(--surface-card-dark);
+    --surface-well: var(--surface-well-dark);
+    --ink-primary: var(--ink-primary-dark);
+    --ink-muted: var(--ink-muted-dark);
+    --border-subtle: var(--border-subtle-dark);
+    --border-control: var(--border-control-dark);
+    --accent-ink: var(--accent-ink-dark);
+    --scrollbar-track: var(--scrollbar-track-dark);
+    --scrollbar-thumb: var(--scrollbar-thumb-dark);
+  }
+
+  @supports (color: light-dark(white, black)) {
+    --surface-page: light-dark(var(--surface-page-light), var(--surface-page-dark));
+    --surface-card: light-dark(var(--surface-card-light), var(--surface-card-dark));
+    --surface-well: light-dark(var(--surface-well-light), var(--surface-well-dark));
+    --ink-primary: light-dark(var(--ink-primary-light), var(--ink-primary-dark));
+    --ink-muted: light-dark(var(--ink-muted-light), var(--ink-muted-dark));
+    --border-subtle: light-dark(var(--border-subtle-light), var(--border-subtle-dark));
+    --border-control: light-dark(var(--border-control-light), var(--border-control-dark));
+    --accent-ink: light-dark(var(--accent-ink-light), var(--accent-ink-dark));
+    --scrollbar-track: light-dark(var(--scrollbar-track-light), var(--scrollbar-track-dark));
+    --scrollbar-thumb: light-dark(var(--scrollbar-thumb-light), var(--scrollbar-thumb-dark));
+  }
+
+  accent-color: var(--accent-ink);
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+:root:has(> head > meta[name="color-scheme"][content="dark"]),
+html.dark {
+  color-scheme: dark;
+  --surface-page: var(--surface-page-dark);
+  --surface-card: var(--surface-card-dark);
+  --surface-well: var(--surface-well-dark);
+  --ink-primary: var(--ink-primary-dark);
+  --ink-muted: var(--ink-muted-dark);
+  --border-subtle: var(--border-subtle-dark);
+  --border-control: var(--border-control-dark);
+  --accent-ink: var(--accent-ink-dark);
+  --scrollbar-track: var(--scrollbar-track-dark);
+  --scrollbar-thumb: var(--scrollbar-thumb-dark);
+}
+
+:root:has(> head > meta[name="color-scheme"][content="light"]),
+html.light {
+  color-scheme: light;
+  --surface-page: var(--surface-page-light);
+  --surface-card: var(--surface-card-light);
+  --surface-well: var(--surface-well-light);
+  --ink-primary: var(--ink-primary-light);
+  --ink-muted: var(--ink-muted-light);
+  --border-subtle: var(--border-subtle-light);
+  --border-control: var(--border-control-light);
+  --accent-ink: var(--accent-ink-light);
+  --scrollbar-track: var(--scrollbar-track-light);
+  --scrollbar-thumb: var(--scrollbar-thumb-light);
 }
 
 @layer base {
+  body {
+    line-height: 1.5;
+    text-align: start;
+    background-color: var(--surface-page);
+    color: var(--ink-primary);
+  }
+
+  h1, h2, h3, h4, th {
+    text-wrap: balance;
+  }
+
+  p, blockquote, .prose-pretty {
+    text-wrap: pretty;
+  }
+
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(113, 113, 122, 0.35) transparent;
   }
 
-  .dark * {
-    scrollbar-color: rgba(161, 161, 170, 0.25) transparent;
+  :where(a:any-link, button, summary, input, textarea, [role="combobox"], [role="option"]):focus-visible {
+    outline: 2px solid var(--accent-ink);
+    outline-offset: 2px;
   }
 
+  :target {
+    scroll-margin-top: 5rem;
+  }
+}
+
+/* Scrollbar fallback only where standard scrollbar-color is unsupported */
+@supports not (scrollbar-color: auto) {
   *::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
 
   *::-webkit-scrollbar-track {
-    background: transparent;
+    background: var(--scrollbar-track);
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: rgba(113, 113, 122, 0.35);
+    background-color: var(--scrollbar-thumb);
     border-radius: 9999px;
-  }
-
-  *::-webkit-scrollbar-thumb:hover {
-    background-color: rgba(113, 113, 122, 0.55);
-  }
-
-  .dark *::-webkit-scrollbar-thumb {
-    background-color: rgba(161, 161, 170, 0.24);
-  }
-
-  .dark *::-webkit-scrollbar-thumb:hover {
-    background-color: rgba(234, 179, 8, 0.55);
   }
 }
 
-/* Custom Range Slider (replaces native browser range track/thumb) */
+/* Visually hidden helper keeping focusable targets (like skip links) visible on focus */
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+.skip-link:focus-visible {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 100;
+  padding: 0.625rem 1rem;
+  border-radius: 0.75rem;
+  background: #c23e1a;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.875rem;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* CSS-driven theme toggle icons synced with meta[name="color-scheme"] and prefers-color-scheme */
+.theme-when-dark {
+  display: none;
+}
+.theme-when-light {
+  display: inline-flex;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(:has(> head > meta[name="color-scheme"][content="light"])):not(.light) .theme-when-dark {
+    display: inline-flex;
+  }
+  :root:not(:has(> head > meta[name="color-scheme"][content="light"])):not(.light) .theme-when-light {
+    display: none;
+  }
+}
+
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .theme-when-dark,
+html.dark .theme-when-dark {
+  display: inline-flex;
+}
+
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .theme-when-light,
+html.dark .theme-when-light {
+  display: none;
+}
+
+/* Content-first top bar: auto-hides when scrolling down, returns immediately on scroll up or focus */
+html {
+  container-type: scroll-state;
+}
+
+.top-bar {
+  transition: transform 0.2s ease-out;
+}
+
+@container scroll-state((scrolled: bottom) and (scrollable: top)) {
+  .top-bar {
+    transform: translateY(-100%);
+  }
+}
+
+.top-bar.is-hidden:not(:focus-within) {
+  transform: translateY(-100%);
+}
+
+.top-bar:focus-within {
+  transform: none;
+}
+
+/* Single-tree responsive header with native popover fallback on narrow viewports */
+.site-header .header-inner > * {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.site-header .menu-button {
+  anchor-name: --smolji-menu-button;
+}
+
+.site-header .site-menu {
+  position: fixed;
+  inset: auto;
+  inset-block-start: 4.5rem;
+  inset-block-start: anchor(--smolji-menu-button bottom);
+  inset-inline-end: 1rem;
+  inline-size: min(80dvw, 18rem);
+  max-inline-size: calc(100dvw - 2rem);
+  block-size: fit-content;
+  max-block-size: calc(100dvh - 6rem);
+  margin-block-start: 0.5rem;
+  overflow: auto;
+  opacity: 0;
+  translate: 0 -6px;
+  transition-property: opacity, translate, display, overlay;
+  transition-duration: 0.18s;
+  transition-timing-function: ease-out;
+  transition-behavior: allow-discrete;
+}
+
+.site-header .site-menu:is(:popover-open, .\:popover-open, .is-fallback-open) {
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  translate: 0 0;
+}
+
+@starting-style {
+  .site-header .site-menu:is(:popover-open, .\:popover-open, .is-fallback-open) {
+    opacity: 0;
+    translate: 0 -6px;
+  }
+}
+
+.site-header.is-measuring * {
+  transition: none !important;
+}
+
+.site-header.is-wide .menu-button {
+  display: none;
+}
+
+.site-header.is-wide .site-menu {
+  position: static;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.25rem;
+  inline-size: auto;
+  max-inline-size: none;
+  block-size: auto;
+  max-block-size: none;
+  overflow: visible;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  opacity: 1;
+  translate: none;
+}
+
+.site-header.is-wide .site-menu::backdrop {
+  display: none;
+}
+
+.site-header [aria-current="page"] {
+  text-decoration: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .top-bar,
+  .site-header .site-menu {
+    transition-duration: 0.01s;
+    translate: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .site-header [aria-current="page"] {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+/* Drafting desk subtle paper dot texture for the landing page */
+.paper-grid-bg {
+  background-image: radial-gradient(circle, rgba(27, 25, 23, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.dark .paper-grid-bg {
+  background-image: radial-gradient(circle, rgba(244, 239, 230, 0.08) 1px, transparent 1px);
+}
+
+/* Custom Range Slider (Vermilion Stamp Ink handle replacing browser defaults) */
 input[type="range"].studio-range {
   -webkit-appearance: none;
   appearance: none;
@@ -66,24 +357,24 @@ input[type="range"].studio-range::-webkit-slider-thumb {
   height: 14px;
   margin-top: -4px;
   border-radius: 9999px;
-  background: #facc15;
-  border: 2px solid #ffffff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  background: #c23e1a;
+  border: 2px solid #fdfbf7;
+  box-shadow: 0 1px 4px rgba(27, 25, 23, 0.35);
   transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
 
 .dark input[type="range"].studio-range::-webkit-slider-thumb {
-  border-color: #09090b;
+  background: #f06a43;
+  border-color: #161513;
 }
 
 input[type="range"].studio-range:hover::-webkit-slider-thumb {
   transform: scale(1.15);
-  background: #fde047;
-  box-shadow: 0 0 0 4px rgba(234, 179, 8, 0.22);
+  box-shadow: 0 0 0 4px rgba(194, 62, 26, 0.22);
 }
 
 input[type="range"].studio-range:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 4px rgba(234, 179, 8, 0.38);
+  box-shadow: 0 0 0 4px rgba(194, 62, 26, 0.35);
 }
 
 input[type="range"].studio-range::-moz-range-track {
@@ -96,27 +387,146 @@ input[type="range"].studio-range::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border-radius: 9999px;
-  background: #facc15;
-  border: 2px solid #ffffff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  background: #c23e1a;
+  border: 2px solid #fdfbf7;
+  box-shadow: 0 1px 4px rgba(27, 25, 23, 0.35);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .dark input[type="range"].studio-range::-moz-range-thumb {
-  border-color: #09090b;
+  background: #f06a43;
+  border-color: #161513;
 }
 
-@keyframes zoom-in {
-  from {
+/* Native Modal Dialog: scroll lock containment & top-layer transitions */
+dialog.studio-modal {
+  opacity: 0;
+  transition-property: opacity, transform, display, overlay;
+  transition-duration: 0.22s;
+  transition-timing-function: ease-out;
+  transition-behavior: allow-discrete;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog.studio-modal {
+    transform: translateY(8px) scale(0.97);
+  }
+}
+
+dialog.studio-modal[open] {
+  opacity: 1;
+}
+
+@starting-style {
+  dialog.studio-modal[open] {
     opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
   }
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  dialog.studio-modal[open] {
+    transform: translateY(0) scale(1);
+  }
+
+  @starting-style {
+    dialog.studio-modal[open] {
+      transform: translateY(8px) scale(0.97);
+    }
+  }
+}
+
+dialog.studio-modal:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.studio-modal::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background-color: rgba(22, 21, 19, 0);
+  backdrop-filter: blur(2px);
+  transition-property: background-color, display, overlay;
+  transition-duration: 0.22s;
+  transition-timing-function: ease-out;
+  transition-behavior: allow-discrete;
+}
+
+dialog.studio-modal[open]::backdrop {
+  background-color: rgba(22, 21, 19, 0.62);
+}
+
+@starting-style {
+  dialog.studio-modal[open]::backdrop {
+    background-color: rgba(22, 21, 19, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.studio-modal,
+  dialog.studio-modal::backdrop {
+    transition-duration: 0.1s;
+  }
+}
+
+/* Native <details> FAQ Accordion */
+details.faq-item > summary {
+  list-style: none;
+}
+
+details.faq-item > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.faq-item > summary .faq-chevron {
+  transform: rotate(0deg);
+}
+
+details.faq-item[open] > summary .faq-chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  details.faq-item > summary .faq-chevron {
+    transition: transform 0.2s ease;
+  }
+
+  details.faq-item::details-content {
+    interpolate-size: allow-keywords;
+    overflow: clip;
+    contain: layout;
+    transition-property: block-size, content-visibility, display;
+    transition-duration: 0.26s;
+    transition-timing-function: ease-in-out;
+    transition-behavior: allow-discrete;
+  }
+
+  details.faq-item:not([open])::details-content {
+    block-size: 0;
+  }
+}
+
+/* Progressive scroll-driven entrance for landing cards */
+@media (prefers-reduced-motion: no-preference) {
+  @supports ((animation-timeline: view()) and (animation-range: entry)) {
+    @keyframes specimen-lift-in {
+      from {
+        opacity: 0.25;
+        transform: translateY(16px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .specimen-reveal {
+      animation: specimen-lift-in auto linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 80%;
+    }
+  }
+}
+
+/* Opt-in entrance animation for toasts & inline popovers */
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -128,10 +538,34 @@ input[type="range"].studio-range::-moz-range-thumb {
   }
 }
 
-.animate-zoom-in {
-  animation: zoom-in 0.18s ease-out;
+.animate-fade-in {
+  animation: fade-in 0.14s ease-out;
 }
 
-.animate-fade-in {
-  animation: fade-in 0.18s ease-out;
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in {
+    animation-duration: 0.08s;
+  }
+}
+
+/* High contrast / Forced Colors Mode support */
+@media (forced-colors: active) {
+  input[type="range"].studio-range::-webkit-slider-thumb {
+    background: Highlight;
+    border-color: CanvasText;
+  }
+
+  input[type="range"].studio-range::-moz-range-thumb {
+    background: Highlight;
+    border-color: CanvasText;
+  }
+
+  dialog.studio-modal {
+    border: 2px solid CanvasText;
+  }
+
+  :where(a:any-link, button, summary, input, textarea, [role="combobox"], [role="option"]):focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
 }
