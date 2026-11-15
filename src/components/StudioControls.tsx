@@ -19,7 +19,7 @@ interface StudioSelectProps<T extends string | number> {
 }
 
 /**
- * Custom glassmorphic dropdown select replacing native browser <select>.
+ * Custom architectural dropdown select replacing native browser <select>.
  */
 export function StudioSelect<T extends string | number>({
   id,
@@ -69,23 +69,24 @@ export function StudioSelect<T extends string | number>({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
-        className={`w-full flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-xs font-medium transition-all cursor-pointer border bg-zinc-50/90 dark:bg-zinc-900/90 text-zinc-800 dark:text-zinc-100 ${
+        className={`w-full min-h-9 flex items-center justify-between gap-2 rounded-xl px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer border bg-[#FDFBF7] dark:bg-[#1F1D1A] text-[#1B1917] dark:text-[#F4EFE6] ${
           open
-            ? 'border-yellow-500 ring-2 ring-yellow-500/20'
-            : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700'
+            ? 'border-[#C23E1A] dark:border-[#F06A43] ring-2 ring-[#C23E1A]/20 dark:ring-[#F06A43]/25'
+            : 'border-[#8F8578] dark:border-[#756C61] hover:border-[#5B534B] dark:hover:border-[#9E958A]'
         }`}
       >
         <span className="flex items-center gap-2 min-w-0 truncate">
           <span className="truncate">{selected?.label}</span>
           {selected?.badge && (
-            <span className="shrink-0 text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+            <span className="shrink-0 text-[0.6875rem] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-[#EDE7DC] dark:bg-[#292622] text-[#5B534B] dark:text-[#B8AFA4]">
               {selected.badge}
             </span>
           )}
         </span>
         <ChevronDown
-          className={`w-3.5 h-3.5 shrink-0 text-zinc-500 transition-transform duration-200 ${
-            open ? 'rotate-180 text-yellow-500' : ''
+          aria-hidden="true"
+          className={`w-3.5 h-3.5 shrink-0 text-[#5B534B] dark:text-[#B8AFA4] transition-transform duration-150 ${
+            open ? 'rotate-180 text-[#B93815] dark:text-[#F06A43]' : ''
           }`}
         />
       </button>
@@ -94,7 +95,7 @@ export function StudioSelect<T extends string | number>({
         <div
           id={listboxId}
           role="listbox"
-          className={`absolute left-0 right-0 z-50 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-xl shadow-2xl p-1 max-h-52 overflow-y-auto ${
+          className={`absolute left-0 right-0 z-50 rounded-xl border border-[#8F8578] dark:border-[#756C61] bg-[#FDFBF7] dark:bg-[#1F1D1A] shadow-xl p-1 max-h-56 overflow-y-auto ${
             placement === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
           }`}
         >
@@ -110,21 +111,23 @@ export function StudioSelect<T extends string | number>({
                   onChange(opt.value);
                   setOpen(false);
                 }}
-                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer text-left ${
+                className={`w-full min-h-8 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer text-left ${
                   isSelected
-                    ? 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400 font-semibold'
-                    : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900'
+                    ? 'bg-[#C23E1A]/12 dark:bg-[#F06A43]/15 text-[#B93815] dark:text-[#F06A43] font-semibold'
+                    : 'text-[#1B1917] dark:text-[#E7E0D5] hover:bg-[#EDE7DC] dark:hover:bg-[#292622]'
                 }`}
               >
                 <span className="flex items-center gap-2 min-w-0 truncate">
                   <span className="truncate">{opt.label}</span>
                   {opt.badge && (
-                    <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800/80 text-zinc-500 dark:text-zinc-400">
+                    <span className="shrink-0 text-[0.6875rem] font-mono px-1.5 py-0.5 rounded bg-[#EDE7DC] dark:bg-[#292622] text-[#5B534B] dark:text-[#B8AFA4]">
                       {opt.badge}
                     </span>
                   )}
                 </span>
-                {isSelected && <Check className="w-3.5 h-3.5 shrink-0 text-yellow-500" />}
+                {isSelected && (
+                  <Check aria-hidden="true" className="w-3.5 h-3.5 shrink-0 text-[#B93815] dark:text-[#F06A43]" />
+                )}
               </button>
             );
           })}
@@ -147,7 +150,7 @@ interface StudioSliderProps {
 }
 
 /**
- * Custom range slider with active progress track and styled thumb replacing browser defaults.
+ * Custom range slider with active vermilion track and clickable value badge reset.
  */
 export function StudioSlider({
   label,
@@ -165,25 +168,25 @@ export function StudioSlider({
 
   return (
     <div className={`space-y-1.5 ${className}`}>
-      <div className="flex items-center justify-between text-[11px]">
-        <span className="text-zinc-600 dark:text-zinc-400 font-medium">{label}</span>
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="text-[#5B534B] dark:text-[#B8AFA4] font-medium">{label}</span>
         <button
           type="button"
           onDoubleClick={onReset}
           onClick={onReset}
           title={onReset ? 'Click to reset' : undefined}
           disabled={!onReset}
-          className={`font-mono font-semibold px-1.5 py-0.5 rounded-md text-[11px] tabular-nums bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 text-yellow-600 dark:text-yellow-400 ${
-            onReset ? 'hover:border-yellow-500/50 cursor-pointer' : 'cursor-default'
+          className={`font-mono font-semibold px-1.5 py-0.5 rounded-md text-[0.6875rem] tabular-nums bg-[#EDE7DC] dark:bg-[#292622] border border-[#8F8578] dark:border-[#756C61] text-[#B93815] dark:text-[#F06A43] ${
+            onReset ? 'hover:border-[#C23E1A] dark:hover:border-[#F06A43] cursor-pointer' : 'cursor-default'
           }`}
         >
           {valueDisplay}
         </button>
       </div>
-      <div className="relative h-5 flex items-center">
-        <div className="w-full h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden pointer-events-none">
+      <div className="relative h-6 flex items-center">
+        <div className="w-full h-1.5 rounded-full bg-[#DFD7CA] dark:bg-[#332E28] overflow-hidden pointer-events-none">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-amber-500 to-yellow-400 transition-[width] duration-75"
+            className="h-full rounded-full bg-[#C23E1A] dark:bg-[#F06A43] transition-[width] duration-75"
             style={{ width: `${percent}%` }}
           />
         </div>
@@ -195,7 +198,7 @@ export function StudioSlider({
           step={step}
           value={value}
           onChange={(e) => onChange(parseFloat(e.target.value))}
-          className="studio-range absolute inset-0 w-full h-full opacity-100 bg-transparent appearance-none cursor-pointer focus:outline-none"
+          className="studio-range absolute inset-0 w-full h-full opacity-100 bg-transparent appearance-none cursor-pointer"
         />
       </div>
     </div>
@@ -209,10 +212,10 @@ interface StudioColorPickerProps {
   presets?: string[];
 }
 
-const DEFAULT_COLOR_PRESETS = ['#12131a', '#ffffff', '#eab308', '#3b82f6', '#ec4899', '#10b981'];
+const DEFAULT_COLOR_PRESETS = ['#1C1917', '#FDFBF7', '#C23E1A', '#2D6A4F', '#2563EB', '#10b981'];
 
 /**
- * Custom color picker with swatch button, quick presets, and editable hex field.
+ * Custom color picker with ink swatch button, curated swatches, and editable hex input.
  */
 export function StudioColorPicker({
   label = 'Solid Color',
@@ -223,23 +226,23 @@ export function StudioColorPicker({
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
-    <div className="p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 space-y-2.5">
+    <div className="p-3 rounded-xl bg-[#EDE7DC]/70 dark:bg-[#292622]/75 border border-[#C7BEB1] dark:border-[#4D463E] space-y-2.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">{label}</span>
-        <div className="flex items-center gap-1.5">
+        <span className="text-xs font-medium text-[#5B534B] dark:text-[#B8AFA4]">{label}</span>
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
             title="Choose custom color"
             aria-label="Open color picker"
-            className="w-6 h-6 rounded-lg border-2 border-white dark:border-zinc-700 shadow-sm ring-1 ring-zinc-300 dark:ring-zinc-700 cursor-pointer transition-transform hover:scale-105 shrink-0"
-            style={{ backgroundColor: value }}
+            className="w-7 h-7 rounded-lg border-2 border-[#FDFBF7] dark:border-[#1F1D1A] shadow-sm ring-1 ring-[#8F8578] dark:ring-[#756C61] cursor-pointer transition-transform hover:scale-105 shrink-0"
+            style={{ backgroundColor: value, forcedColorAdjust: 'none' }}
           />
           <input
             ref={inputRef}
             type="color"
             aria-label="Color picker input"
-            value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#12131a'}
+            value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#1C1917'}
             onChange={(e) => onChange(e.target.value)}
             className="sr-only"
           />
@@ -255,11 +258,11 @@ export function StudioColorPicker({
             }}
             onBlur={() => {
               if (!/^#[0-9a-fA-F]{6}$/.test(value)) {
-                onChange('#12131a');
+                onChange('#1C1917');
               }
             }}
             maxLength={7}
-            className="w-20 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-yellow-500 focus:outline-none rounded-lg px-2 py-1 text-[11px] font-mono text-zinc-800 dark:text-zinc-200 uppercase"
+            className="w-22 min-h-8 bg-[#FDFBF7] dark:bg-[#161513] border border-[#8F8578] dark:border-[#756C61] focus:border-[#C23E1A] dark:focus:border-[#F06A43] rounded-lg px-2 py-1 text-xs font-mono text-[#1B1917] dark:text-[#F4EFE6] uppercase"
           />
         </div>
       </div>
@@ -274,13 +277,18 @@ export function StudioColorPicker({
               onClick={() => onChange(preset)}
               title={preset}
               aria-label={`Select color ${preset}`}
-              className={`flex-1 h-5 rounded-md border transition-all cursor-pointer ${
+              aria-pressed={isActive}
+              className={`flex-1 min-h-6 rounded-md border transition-all cursor-pointer flex items-center justify-center ${
                 isActive
-                  ? 'border-yellow-500 ring-2 ring-yellow-500/30 scale-105'
-                  : 'border-zinc-300/80 dark:border-zinc-700/80 hover:scale-105'
+                  ? 'border-[#1B1917] dark:border-[#F4EFE6] ring-2 ring-[#C23E1A] dark:ring-[#F06A43] scale-105'
+                  : 'border-[#8F8578] dark:border-[#756C61] hover:scale-105'
               }`}
-              style={{ backgroundColor: preset }}
-            />
+              style={{ backgroundColor: preset, forcedColorAdjust: 'none' }}
+            >
+              {isActive && (
+                <span className="w-1.5 h-1.5 rounded-full bg-white ring-1 ring-black/40" aria-hidden="true" />
+              )}
+            </button>
           );
         })}
       </div>
