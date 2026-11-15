@@ -1,26 +1,77 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Smolji Studio E2E Suite', () => {
+const TRANSPARENT_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+test.describe('Smolji Landing Page (/) & Navigation E2E', () => {
   test.beforeEach(async ({ page }) => {
-    // Stub external CDN and upload requests so E2E tests are fast and deterministic in CI
     await page.route('https://emoji-cdn.mqrio.dev/**', async (route) => {
-      // 1x1 transparent PNG
-      const transparentPng = Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-        'base64'
-      );
       await route.fulfill({
         status: 200,
         contentType: 'image/png',
-        body: transparentPng,
+        body: TRANSPARENT_PNG,
+      });
+    });
+  });
+
+  test('renders creative foundry landing page, interactive specimen proof, non-exclusive FAQ, and zero-login CTA to /playground', async ({ page }) => {
+    await page.goto('/');
+    await expect(page).toHaveTitle(/Smolji/i);
+    await expect(
+      page.getByRole('heading', { level: 1, name: /Layer emojis into sharp PNG stickers/i })
+    ).toBeVisible();
+
+    // Interactive specimen proof bench
+    await page.getByRole('button', { name: '🔥' }).click();
+    await page.getByRole('button', { name: 'Google Noto' }).click();
+    await expect(page.getByAltText(/🔥 rendered in Google Noto sticker style/i)).toBeVisible();
+    await page.getByRole('button', { name: 'Circle' }).click();
+    await expect(page.getByRole('button', { name: 'Circle' })).toHaveAttribute('aria-pressed', 'true');
+
+    // Multiple FAQ items can stay open independently
+    const faqFirst = page.getByText(/Do I need an account or login to open the Playground\?/i);
+    const faqSecond = page.getByText(/Which emoji sets are licensed for commercial sticker packs\?/i);
+    await faqFirst.click();
+    await faqSecond.click();
+    await expect(page.getByText(/opens straight into the canvas studio/i)).toBeVisible();
+    await expect(page.getByText(/MIT\), Twitter Twemoji/i)).toBeVisible();
+
+    // Click primary CTA to enter /playground without login or barriers
+    await page.getByRole('link', { name: /Open Playground/i }).first().click();
+    await expect(page).toHaveURL(/\/playground$/);
+    await expect(page.locator('canvas')).toBeVisible();
+    await expect(page.getByText('Studio Assets')).toBeVisible();
+  });
+
+  test('switches responsive header to popover menu on narrow mobile viewports', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/');
+
+    const menuBtn = page.getByRole('button', { name: /Menu/i });
+    await expect(menuBtn).toBeVisible();
+    await menuBtn.click();
+    await expect(page.getByRole('link', { name: 'Styles', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'FAQ', exact: true })).toBeVisible();
+  });
+});
+
+test.describe('Smolji Studio E2E Suite (/playground)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('https://emoji-cdn.mqrio.dev/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: TRANSPARENT_PNG,
       });
     });
 
-    await page.goto('/');
+    await page.goto('/playground');
   });
 
   test('renders full studio layout, header controls, canvas, and sidebars', async ({ page }) => {
-    await expect(page).toHaveTitle(/Smolji/i);
+    await expect(page).toHaveTitle(/Playground \| Smolji/i);
     await expect(page.getByRole('heading', { name: 'Smolji' })).toBeVisible();
     await expect(page.getByText('Studio Assets')).toBeVisible();
     await expect(page.getByText('Layers Hierarchy')).toBeVisible();
@@ -83,13 +134,15 @@ test.describe('Smolji Studio E2E Suite', () => {
     await expect(page.getByText('85%')).toBeVisible();
     await page.getByTitle('Recenter view').click();
 
-    // Theme toggle
+    // Theme toggle respects system default (light in headless) and persists explicit dark override
     const html = page.locator('html');
-    await expect(html).toHaveClass(/dark/);
-    await page.getByTitle('Toggle theme').click();
     await expect(html).toHaveClass(/light/);
     await page.getByTitle('Toggle theme').click();
     await expect(html).toHaveClass(/dark/);
+    await page.reload();
+    await expect(html).toHaveClass(/dark/);
+    await page.getByTitle('Toggle theme').click();
+    await expect(html).toHaveClass(/light/);
 
     // Artboard background modes
     await page.getByRole('button', { name: 'Invisible' }).click();
@@ -119,8 +172,8 @@ test.describe('Smolji Studio E2E Suite', () => {
         },
         { cx, cy }
       );
-      await expect(page.getByRole('button', { name: /Duplicate Layer/i })).toBeVisible();
-      await page.getByRole('button', { name: /Duplicate Layer/i }).click();
+      await expect(page.getByRole('menuitem', { name: /Duplicate Layer/i })).toBeVisible();
+      await page.getByRole('menuitem', { name: /Duplicate Layer/i }).click();
       await expect(page.getByText('Layer 2')).toBeVisible();
     }
 
