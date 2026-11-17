@@ -568,4 +568,13 @@ details.faq-item[open] > summary .faq-chevron {
     outline: 2px solid Highlight;
     outline-offset: 2px;
   }
+
+  [role="toolbar"] button[aria-disabled="true"] {
+    color: GrayText;
+  }
+}
+
+.studio-stage-canvas {
+  content-visibility: auto;
+  contain-intrinsic-size: 100vw 100vh;
 }

@@ -32,6 +32,11 @@ import {
   Search,
   ChevronRight,
   CopyPlus,
+  Film,
+  Play,
+  Pause,
+  ImagePlus,
+  ClipboardPaste,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { StudioSelect, StudioSlider, StudioColorPicker } from './components/StudioControls';
@@ -47,6 +52,23 @@ import {
   getGemojiList,
 } from './utils/emoji';
 import {
+  buildExportFrameDurations,
+  dataUrlToArrayBuffer,
+  decodeAnimatedImage,
+  encodeGifFrames,
+  getFrameAtTime,
+  type DecodedAnimationSequence,
+  type GifFrameInput,
+} from './utils/gif';
+import {
+  dataUrlToImageFile,
+  extractImageFilesFromDataTransfer,
+  getLayerDimensions,
+  loadExternalImageAsset,
+  readClipboardImageFiles,
+  sanitizeExportFileStem,
+} from './utils/image';
+import {
   ColorScheme,
   THEME_EVENT_NAME,
   THEME_STORAGE_KEY,
@@ -57,6 +79,9 @@ import {
 } from './utils/theme';
 
 const ALL_POPULAR_EMOJIS = Object.values(POPULAR_EMOJIS).flat();
+export const EXPORT_SIZES = [64, 128, 256, 512, 1024, 2048] as const;
+
+type AssetCacheEntry = HTMLImageElement | DecodedAnimationSequence | 'loading' | 'failed';
 
 const CATEGORY_TABS: Array<{ id: string; label: string; key: keyof typeof POPULAR_EMOJIS | null }> = [
   { id: 'all', label: 'All', key: null },
@@ -174,6 +199,14 @@ export default function App() {
   // UI Status states
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [isZipping, setIsZipping] = useState(false);
+  const [isExportingGif, setIsExportingGif] = useState(false);
+  const [isPlayingAnimation, setIsPlayingAnimation] = useState(true);
+  const [isDragOverFile, setIsDragOverFile] = useState(false);
+  const [animatedAssetKeys, setAnimatedAssetKeys] = useState<Record<string, boolean>>({});
+  const [isDocumentHidden, setIsDocumentHidden] = useState(() =>
+    typeof document !== 'undefined' ? document.hidden : false
+  );
+  const [isContentVisibilitySkipped, setIsContentVisibilitySkipped] = useState(false);
   const [, setCanvasError] = useState('');
 
   // Interactive interactionMode: null | 'drag' | 'rotate' | 'scale_tl' | 'scale_tr' | 'scale_bl' | 'scale_br'
@@ -192,13 +225,73 @@ export default function App() {
   const touchStartDist = useRef(0);
   const touchStartZoom = useRef(1);
   const touchStartLayerScale = useRef(1);
-  const imageCache = useRef<Record<string, HTMLImageElement | 'loading' | 'failed'>>({});
+  const imageCache = useRef<Record<string, AssetCacheEntry>>({});
+  const assetLoadPromises = useRef<Record<string, Promise<AssetCacheEntry>>>({});
   const redrawPending = useRef(false);
   const toastTimerRef = useRef<number | null>(null);
+  const animationTimeMsRef = useRef(0);
+  const lastTickTimeRef = useRef<number | null>(null);
+  const rafLoopIdRef = useRef<number | null>(null);
+  const lastInternalPasteAtRef = useRef(0);
+  const latestLayersRef = useRef<Layer[]>(layers);
+
+  useEffect(() => {
+    latestLayersRef.current = layers;
+  }, [layers]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const settingsDialogRef = useRef<HTMLDialogElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceFileInputRef = useRef<HTMLInputElement | null>(null);
+  const historyToolbarRef = useRef<HTMLDivElement | null>(null);
+  const actionsToolbarRef = useRef<HTMLDivElement | null>(null);
+
+  const getLayerAssetKey = (layer: Layer, defaultStyle: string): string => {
+    if (layer.type === 'image') {
+      return layer.content || '';
+    }
+    return getEmojiUrl(layer.emoji || '', layer.style || defaultStyle);
+  };
+
+  const isAnimatedCacheEntry = (
+    entry: AssetCacheEntry | undefined
+  ): entry is DecodedAnimationSequence =>
+    Boolean(entry && typeof entry === 'object' && 'kind' in entry && entry.kind === 'animated');
+
+  const layerMayAnimate = (layer: Layer, defaultStyle: string): boolean => {
+    if (layer.type === 'image') {
+      if (layer.isAnimated) return true;
+      const mime = (layer.mimeType || '').toLowerCase();
+      return mime === 'image/gif' || mime === 'image/webp' || mime === 'image/apng';
+    }
+    return (layer.style || defaultStyle) === 'animated-noto-color-emoji';
+  };
+
+  const isAnimatedLayer = (layer: Layer): boolean => {
+    const key = getLayerAssetKey(layer, selectedStyle);
+    if (key && key in animatedAssetKeys) {
+      return Boolean(animatedAssetKeys[key]);
+    }
+    return (
+      Boolean(layer.isAnimated) ||
+      (layer.type !== 'image' && (layer.style || selectedStyle) === 'animated-noto-color-emoji')
+    );
+  };
+
+  const hasActiveAnimations = useMemo(() => {
+    return layers.some((layer) => {
+      if (layer.visible === false) return false;
+      const key = getLayerAssetKey(layer, selectedStyle);
+      if (key && key in animatedAssetKeys) {
+        return Boolean(animatedAssetKeys[key]);
+      }
+      return (
+        Boolean(layer.isAnimated) ||
+        (layer.type !== 'image' && (layer.style || selectedStyle) === 'animated-noto-color-emoji')
+      );
+    });
+  }, [layers, selectedStyle, animatedAssetKeys]);
 
   // Filtered library emojis from keyword search or active category
   const displayedLibraryEmojis = useMemo(() => {
@@ -444,6 +537,7 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
         if (copiedLayerData) {
           e.preventDefault();
+          lastInternalPasteAtRef.current = Date.now();
           handlePasteLayer();
         }
       }
@@ -504,9 +598,197 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Pause background canvas work when document tab is hidden or content-visibility skips rendering
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setIsDocumentHidden(document.hidden);
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const handleContentVisibility = (event: Event) => {
+      const skipped = Boolean((event as Event & { skipped?: boolean }).skipped);
+      setIsContentVisibilitySkipped(skipped);
+    };
+    canvas.addEventListener('contentvisibilityautostatechange', handleContentVisibility);
+    return () => {
+      canvas.removeEventListener('contentvisibilityautostatechange', handleContentVisibility);
+    };
+  }, []);
+
+  // Roving-tabindex fallback for browsers lacking native focusgroup support on role="toolbar"
+  useEffect(() => {
+    if (typeof HTMLElement === 'undefined' || 'focusGroup' in HTMLElement.prototype) {
+      return;
+    }
+
+    const cleanups: Array<() => void> = [];
+    const bars = [historyToolbarRef.current, actionsToolbarRef.current].filter(
+      (bar): bar is HTMLDivElement => Boolean(bar)
+    );
+
+    for (const bar of bars) {
+      const getItems = () => Array.from(bar.querySelectorAll<HTMLButtonElement>('button'));
+      const syncInitialTabStops = () => {
+        const items = getItems();
+        if (items.length === 0) return;
+        const active = items.find((btn) => btn.tabIndex === 0) || items[0];
+        items.forEach((btn) => {
+          btn.tabIndex = btn === active ? 0 : -1;
+        });
+      };
+
+      syncInitialTabStops();
+
+      const onFocusIn = (e: FocusEvent) => {
+        const target = e.target;
+        if (!(target instanceof HTMLButtonElement) || !bar.contains(target)) return;
+        const items = getItems();
+        if (!items.includes(target)) return;
+        items.forEach((btn) => {
+          btn.tabIndex = btn === target ? 0 : -1;
+        });
+      };
+
+      const onKeyDown = (e: KeyboardEvent) => {
+        const items = getItems();
+        if (items.length === 0) return;
+        const current = document.activeElement;
+        if (!(current instanceof HTMLButtonElement) || !items.includes(current)) return;
+
+        const vertical = bar.getAttribute('aria-orientation') === 'vertical';
+        const rtl = typeof getComputedStyle === 'function' && getComputedStyle(bar).direction === 'rtl';
+        const stepMap: Record<string, number> = vertical
+          ? { ArrowDown: 1, ArrowUp: -1 }
+          : { ArrowRight: rtl ? -1 : 1, ArrowLeft: rtl ? 1 : -1 };
+
+        let nextIdx: number | null = null;
+        if (e.key === 'Home') {
+          nextIdx = 0;
+        } else if (e.key === 'End') {
+          nextIdx = items.length - 1;
+        } else if (e.key in stepMap) {
+          const idx = items.indexOf(current);
+          nextIdx = (idx + stepMap[e.key] + items.length) % items.length;
+        }
+
+        if (nextIdx !== null) {
+          e.preventDefault();
+          e.stopPropagation();
+          items.forEach((btn, i) => {
+            btn.tabIndex = i === nextIdx ? 0 : -1;
+          });
+          items[nextIdx]?.focus();
+        }
+      };
+
+      bar.addEventListener('focusin', onFocusIn);
+      bar.addEventListener('keydown', onKeyDown);
+      cleanups.push(() => {
+        bar.removeEventListener('focusin', onFocusIn);
+        bar.removeEventListener('keydown', onKeyDown);
+      });
+    }
+
+    return () => {
+      for (const cleanup of cleanups) {
+        cleanup();
+      }
+    };
+  }, [hasActiveAnimations]);
+
+  const drawEditorCanvasRef = useRef<(timeMs?: number) => void>(() => {});
+  const ingestExternalFilesRef = useRef<(files: File[], replaceLayerId?: string) => Promise<void>>(
+    async () => {}
+  );
+
+  // Global clipboard paste handler for external images (Ctrl+V / Cmd+V)
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      if (settingsOpen) return;
+      if (Date.now() - lastInternalPasteAtRef.current < 250) {
+        return;
+      }
+
+      const files = extractImageFilesFromDataTransfer(e.clipboardData);
+      if (files.length > 0) {
+        e.preventDefault();
+        void ingestExternalFilesRef.current(files);
+        return;
+      }
+
+      // Allow pasting raw data:image/... strings or copied <img> HTML outside text fields
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || !e.clipboardData) {
+        return;
+      }
+
+      const html = e.clipboardData.getData('text/html');
+      const plain = e.clipboardData.getData('text/plain');
+      let candidateDataUrl = '';
+      if (html) {
+        const srcMatch = /<img[^>]+src=["'](data:image\/[^"']+)["']/i.exec(html);
+        if (srcMatch?.[1]) {
+          candidateDataUrl = srcMatch[1];
+        }
+      } else if (plain && plain.trim().startsWith('data:image/')) {
+        candidateDataUrl = plain.trim();
+      }
+
+      if (candidateDataUrl) {
+        const converted = dataUrlToImageFile(candidateDataUrl);
+        if (converted) {
+          e.preventDefault();
+          void ingestExternalFilesRef.current([converted]);
+        }
+      }
+    };
+
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => window.removeEventListener('paste', handleGlobalPaste);
+  }, [settingsOpen]);
+
+  // Animated layer playback RAF loop (paused automatically when tab or canvas is hidden)
+  useEffect(() => {
+    if (!hasActiveAnimations || !isPlayingAnimation || isDocumentHidden || isContentVisibilitySkipped) {
+      lastTickTimeRef.current = null;
+      if (rafLoopIdRef.current !== null) {
+        cancelAnimationFrame(rafLoopIdRef.current);
+        rafLoopIdRef.current = null;
+      }
+      return;
+    }
+
+    let cancelled = false;
+    const tick = (now: number) => {
+      if (cancelled) return;
+      if (lastTickTimeRef.current !== null) {
+        const delta = Math.min(100, Math.max(0, now - lastTickTimeRef.current));
+        animationTimeMsRef.current += delta;
+      }
+      lastTickTimeRef.current = now;
+      drawEditorCanvasRef.current(animationTimeMsRef.current);
+      rafLoopIdRef.current = requestAnimationFrame(tick);
+    };
+
+    rafLoopIdRef.current = requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+      lastTickTimeRef.current = null;
+      if (rafLoopIdRef.current !== null) {
+        cancelAnimationFrame(rafLoopIdRef.current);
+        rafLoopIdRef.current = null;
+      }
+    };
+  }, [hasActiveAnimations, isPlayingAnimation, isDocumentHidden, isContentVisibilitySkipped]);
+
   // Redraw interactive canvas whenever state changes
   useEffect(() => {
-    drawEditorCanvas();
+    drawEditorCanvas(animationTimeMsRef.current);
   }, [
     layers,
     selectedLayerId,
@@ -526,35 +808,25 @@ export default function App() {
     selectedStyle,
     theme,
     viewportSize,
+    animatedAssetKeys,
   ]);
 
   const handleCopyLayer = (id: string) => {
     const layer = layers.find((l) => l.id === id);
     if (!layer) return;
-    setCopiedLayerData({
-      id: layer.id,
-      x: layer.x,
-      y: layer.y,
-      emoji: layer.emoji,
-      style: layer.style,
-      scale: layer.scale,
-      rotation: layer.rotation,
-      skewX: layer.skewX,
-      skewY: layer.skewY,
-      opacity: layer.opacity,
-      flipX: layer.flipX,
-      flipY: layer.flipY,
-      visible: layer.visible,
-    });
+    const cloned = typeof structuredClone === 'function' ? structuredClone(layer) : { ...layer };
+    setCopiedLayerData(cloned);
     showToast('Copied layer settings!');
   };
 
   const handlePasteLayer = () => {
     if (!copiedLayerData) return;
     pushStateToUndo(layers);
+    const clonedBase =
+      typeof structuredClone === 'function' ? structuredClone(copiedLayerData) : { ...copiedLayerData };
     const newLayer: Layer = {
-      ...copiedLayerData,
-      id: Date.now().toString(),
+      ...clonedBase,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       x: (Math.random() - 0.5) * 40,
       y: (Math.random() - 0.5) * 40,
     };
@@ -599,30 +871,263 @@ export default function App() {
     });
   };
 
+  const loadAssetForKey = async (
+    key: string,
+    expectAnimated: boolean,
+    mimeType = ''
+  ): Promise<AssetCacheEntry> => {
+    const cached = imageCache.current[key];
+    if (cached && cached !== 'loading' && (!expectAnimated || cached !== 'failed')) {
+      return cached;
+    }
+    if (key in assetLoadPromises.current) {
+      return assetLoadPromises.current[key];
+    }
+
+    const promise = (async (): Promise<AssetCacheEntry> => {
+      imageCache.current[key] = 'loading';
+      if (expectAnimated) {
+        try {
+          let buffer: ArrayBuffer | null = null;
+          if (key.startsWith('data:')) {
+            buffer = dataUrlToArrayBuffer(key);
+          } else if (typeof fetch === 'function') {
+            const response = await fetch(key);
+            if (response.ok && typeof response.arrayBuffer === 'function') {
+              buffer = await response.arrayBuffer();
+            }
+          }
+          if (buffer) {
+            const decoded = await decodeAnimatedImage(buffer, mimeType);
+            if (decoded && decoded.frames.length > 1) {
+              imageCache.current[key] = decoded;
+              setAnimatedAssetKeys((prev) => (prev[key] === true ? prev : { ...prev, [key]: true }));
+              return decoded;
+            }
+          }
+        } catch {
+          // Fall through to standard image element loading
+        }
+      }
+
+      const img = await loadImgPromise(key);
+      imageCache.current[key] = img;
+      if (expectAnimated) {
+        setAnimatedAssetKeys((prev) => (prev[key] === false ? prev : { ...prev, [key]: false }));
+      }
+      return img;
+    })();
+
+    assetLoadPromises.current[key] = promise;
+    try {
+      return await promise;
+    } finally {
+      delete assetLoadPromises.current[key];
+    }
+  };
+
+  const startLoadingLayerAsset = (layer: Layer, defaultStyle: string) => {
+    const key = getLayerAssetKey(layer, defaultStyle);
+    if (!key) return;
+    if (imageCache.current[key]) return;
+    const expectAnimated = layerMayAnimate(layer, defaultStyle);
+    if (!expectAnimated) {
+      imageCache.current[key] = 'loading';
+      const imgElement = new Image();
+      imgElement.crossOrigin = 'anonymous';
+      imgElement.src = key;
+      imgElement.onload = () => {
+        imageCache.current[key] = imgElement;
+        requestCanvasRedraw();
+      };
+      imgElement.onerror = () => {
+        imageCache.current[key] = 'failed';
+        requestCanvasRedraw();
+      };
+      return;
+    }
+    void loadAssetForKey(key, true, layer.mimeType).then(() => {
+      requestCanvasRedraw();
+    });
+  };
+
+  const resolveDrawableForLayer = (
+    asset: AssetCacheEntry | undefined,
+    timeMs: number
+  ): CanvasImageSource | null => {
+    if (!asset || asset === 'loading' || asset === 'failed') {
+      return null;
+    }
+    if (isAnimatedCacheEntry(asset)) {
+      const frame = getFrameAtTime(asset, timeMs);
+      return frame ? frame.image : null;
+    }
+    return asset;
+  };
+
   const ensureLayersLoaded = async (targetLayers: Layer[], defaultStyle: string) => {
     await Promise.all(
       targetLayers.map(async (layer) => {
-        const url = getEmojiUrl(layer.emoji || '', layer.style || defaultStyle);
-        if (!url) return;
-        if (!imageCache.current[url] || imageCache.current[url] === 'loading') {
-          const img = await loadImgPromise(url);
-          imageCache.current[url] = img;
-        }
+        const key = getLayerAssetKey(layer, defaultStyle);
+        if (!key) return;
+        await loadAssetForKey(key, layerMayAnimate(layer, defaultStyle), layer.mimeType);
       })
     );
+  };
+
+  const ingestExternalImageFiles = async (files: File[], replaceLayerId?: string) => {
+    if (files.length === 0) return;
+
+    if (replaceLayerId) {
+      try {
+        const asset = await loadExternalImageAsset(files[0], files[0].name || 'Replacement Image');
+        const isMultiFrame = Boolean(asset.animation && asset.animation.frames.length > 1);
+        if (asset.animation && asset.animation.frames.length > 1) {
+          imageCache.current[asset.dataUrl] = asset.animation;
+        } else {
+          const loaded = await loadImgPromise(asset.dataUrl);
+          imageCache.current[asset.dataUrl] = loaded;
+        }
+        setAnimatedAssetKeys((prev) =>
+          prev[asset.dataUrl] === isMultiFrame ? prev : { ...prev, [asset.dataUrl]: isMultiFrame }
+        );
+        pushStateToUndo(latestLayersRef.current);
+        setLayers((prev) =>
+          prev.map((l) =>
+            l.id === replaceLayerId
+              ? {
+                  ...l,
+                  type: 'image',
+                  content: asset.dataUrl,
+                  emoji: undefined,
+                  imageName: asset.name,
+                  mimeType: asset.mimeType,
+                  naturalWidth: asset.naturalWidth,
+                  naturalHeight: asset.naturalHeight,
+                  isAnimated: asset.isAnimated,
+                }
+              : l
+          )
+        );
+        requestCanvasRedraw();
+        showToast(`Replaced image with ${asset.name}.`);
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Could not load replacement image.');
+      }
+      return;
+    }
+
+    const addedLayers: Layer[] = [];
+    const animUpdates: Record<string, boolean> = {};
+    let firstError = '';
+
+    for (const file of files) {
+      try {
+        const asset = await loadExternalImageAsset(file, file.name || 'Pasted Image');
+        const isMultiFrame = Boolean(asset.animation && asset.animation.frames.length > 1);
+        animUpdates[asset.dataUrl] = isMultiFrame;
+        if (asset.animation && asset.animation.frames.length > 1) {
+          imageCache.current[asset.dataUrl] = asset.animation;
+        } else {
+          const loaded = await loadImgPromise(asset.dataUrl);
+          imageCache.current[asset.dataUrl] = loaded;
+        }
+        const offset = addedLayers.length * 18;
+        addedLayers.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          type: 'image',
+          content: asset.dataUrl,
+          imageName: asset.name,
+          mimeType: asset.mimeType,
+          naturalWidth: asset.naturalWidth,
+          naturalHeight: asset.naturalHeight,
+          isAnimated: asset.isAnimated,
+          x: offset,
+          y: offset,
+          scale: 1.0,
+          rotation: 0,
+          skewX: 0,
+          skewY: 0,
+          opacity: 1.0,
+          visible: true,
+        });
+      } catch (err) {
+        if (!firstError) {
+          firstError = err instanceof Error ? err.message : 'Could not load image file.';
+        }
+      }
+    }
+
+    if (addedLayers.length > 0) {
+      setAnimatedAssetKeys((prev) => ({ ...prev, ...animUpdates }));
+      pushStateToUndo(latestLayersRef.current);
+      setLayers((prev) => [...prev, ...addedLayers]);
+      setSelectedLayerId(addedLayers[addedLayers.length - 1].id);
+      requestCanvasRedraw();
+      showToast(
+        addedLayers.length === 1
+          ? `Added image "${addedLayers[0].imageName || 'Image'}".`
+          : `Added ${addedLayers.length} image layers.`
+      );
+    } else if (firstError) {
+      showToast(firstError);
+    }
+  };
+
+  useEffect(() => {
+    ingestExternalFilesRef.current = ingestExternalImageFiles;
+  });
+
+  const handlePasteImageFromClipboard = async () => {
+    try {
+      const files = await readClipboardImageFiles();
+      await ingestExternalImageFiles(files);
+    } catch (err) {
+      showToast(
+        err instanceof Error
+          ? err.message
+          : 'Could not read image from clipboard. Try Ctrl+V instead.'
+      );
+    }
+  };
+
+  const handleStageDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes('Files')) {
+      e.preventDefault();
+      if (!isDragOverFile) {
+        setIsDragOverFile(true);
+      }
+    }
+  };
+
+  const handleStageDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setIsDragOverFile(false);
+    }
+  };
+
+  const handleStageDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOverFile(false);
+    const files = extractImageFilesFromDataTransfer(e.dataTransfer);
+    if (files.length > 0) {
+      void ingestExternalImageFiles(files);
+    } else if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      showToast('Unsupported file format. Drop PNG, JPEG, GIF, WebP, SVG, AVIF, BMP, or ICO.');
+    }
   };
 
   const getTransformPoints = (layer: Layer, size = 512) => {
     const cx = size / 2 + layer.x;
     const cy = size / 2 + layer.y;
-    const es = 256 * layer.scale;
+    const { width: lw, height: lh } = getLayerDimensions(layer);
 
     const pts = {
-      tl: { x: -es / 2, y: -es / 2 },
-      tr: { x: es / 2, y: -es / 2 },
-      bl: { x: -es / 2, y: es / 2 },
-      br: { x: es / 2, y: es / 2 },
-      rot: { x: 0, y: -es / 2 - 28 },
+      tl: { x: -lw / 2, y: -lh / 2 },
+      tr: { x: lw / 2, y: -lh / 2 },
+      bl: { x: -lw / 2, y: lh / 2 },
+      br: { x: lw / 2, y: lh / 2 },
+      rot: { x: 0, y: -lh / 2 - 28 },
     };
 
     const rotRad = ((layer.rotation || 0) * Math.PI) / 180;
@@ -654,11 +1159,11 @@ export default function App() {
     redrawPending.current = true;
     requestAnimationFrame(() => {
       redrawPending.current = false;
-      drawEditorCanvas();
+      drawEditorCanvasRef.current(animationTimeMsRef.current);
     });
   };
 
-  const drawEditorCanvas = () => {
+  const drawEditorCanvas = (timeMs: number = animationTimeMsRef.current) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -682,17 +1187,22 @@ export default function App() {
       } else {
         ctx.scale(dpr, dpr);
       }
-      render2D(ctx, width, height, false);
+      render2D(ctx, width, height, false, timeMs);
     } else {
       setCanvasError('Failed to initialize 2D context.');
     }
   };
 
+  useEffect(() => {
+    drawEditorCanvasRef.current = drawEditorCanvas;
+  });
+
   const render2D = (
     ctx: CanvasRenderingContext2D,
     widthOrSize: number,
     heightOrNull: number | null,
-    isExport?: boolean
+    isExport?: boolean,
+    animationTimeMs = 0
   ) => {
     if (isExport) {
       const size = widthOrSize;
@@ -725,8 +1235,9 @@ export default function App() {
 
       layers.forEach((layer) => {
         if (layer.visible === false) return;
-        const imgUrl = getEmojiUrl(layer.emoji || '', layer.style || selectedStyle);
-        const img = imageCache.current[imgUrl];
+        const imgUrl = getLayerAssetKey(layer, selectedStyle);
+        const asset = imgUrl ? imageCache.current[imgUrl] : undefined;
+        const drawable = resolveDrawableForLayer(asset, animationTimeMs);
 
         ctx.save();
         const cx = (512 / 2 + layer.x) * scaleFactor;
@@ -753,22 +1264,24 @@ export default function App() {
           ctx.shadowOffsetY = (shadowOffsetY / 100) * size * layer.scale;
         }
 
-        const emojiSize = 256 * layer.scale * scaleFactor;
+        const { width: layerW, height: layerH } = getLayerDimensions(layer);
+        const drawW = layerW * scaleFactor;
+        const drawH = layerH * scaleFactor;
 
         let drewImage = false;
-        if (img && img !== 'failed' && img !== 'loading') {
+        if (drawable) {
           try {
-            ctx.drawImage(img, -emojiSize / 2, -emojiSize / 2, emojiSize, emojiSize);
+            ctx.drawImage(drawable, -drawW / 2, -drawH / 2, drawW, drawH);
             drewImage = true;
           } catch {
             drewImage = false;
           }
         }
-        if (!drewImage) {
+        if (!drewImage && layer.type !== 'image') {
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillStyle = theme === 'dark' ? '#F4EFE6' : '#1B1917';
-          ctx.font = `${emojiSize * 0.7}px system-ui, Segoe UI`;
+          ctx.font = `${drawW * 0.7}px system-ui, Segoe UI`;
           ctx.fillText(layer.emoji || '', 0, 0);
         }
         ctx.restore();
@@ -851,24 +1364,15 @@ export default function App() {
     // 5. Render visible layers
     layers.forEach((layer) => {
       if (layer.visible === false) return;
-      const imgUrl = getEmojiUrl(layer.emoji || '', layer.style || selectedStyle);
-      let img = imageCache.current[imgUrl];
+      const imgUrl = getLayerAssetKey(layer, selectedStyle);
+      const asset = imgUrl ? imageCache.current[imgUrl] : undefined;
 
-      if (!img) {
-        imageCache.current[imgUrl] = 'loading';
-        const imgElement = new Image();
-        imgElement.crossOrigin = 'anonymous';
-        imgElement.src = imgUrl;
-        imgElement.onload = () => {
-          imageCache.current[imgUrl] = imgElement;
-          requestCanvasRedraw();
-        };
-        imgElement.onerror = () => {
-          imageCache.current[imgUrl] = 'failed';
-          requestCanvasRedraw();
-        };
-        img = 'loading';
+      if (imgUrl && !asset) {
+        startLoadingLayerAsset(layer, selectedStyle);
       }
+
+      const drawable = resolveDrawableForLayer(asset, animationTimeMs);
+      const { width: lw, height: lh } = getLayerDimensions(layer);
 
       const cx = 512 / 2 + layer.x;
       const cy = 512 / 2 + layer.y;
@@ -896,23 +1400,34 @@ export default function App() {
         ctx.shadowOffsetY = (shadowOffsetY / 100) * 512 * layer.scale;
       }
 
-      const emojiSize = 256 * layer.scale;
-
       let drewImage = false;
-      if (img && img !== 'failed' && img !== 'loading') {
+      if (drawable) {
         try {
-          ctx.drawImage(img, -emojiSize / 2, -emojiSize / 2, emojiSize, emojiSize);
+          ctx.drawImage(drawable, -lw / 2, -lh / 2, lw, lh);
           drewImage = true;
         } catch {
           drewImage = false;
         }
       }
       if (!drewImage) {
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = theme === 'dark' ? '#F4EFE6' : '#1B1917';
-        ctx.font = `${emojiSize * 0.7}px system-ui, Segoe UI`;
-        ctx.fillText(layer.emoji || '', 0, 0);
+        if (layer.type === 'image') {
+          ctx.fillStyle = theme === 'dark' ? 'rgba(41, 38, 34, 0.85)' : 'rgba(237, 231, 220, 0.85)';
+          ctx.strokeStyle = theme === 'dark' ? '#756C61' : '#8F8578';
+          ctx.lineWidth = 2;
+          ctx.fillRect(-lw / 2, -lh / 2, lw, lh);
+          ctx.strokeRect(-lw / 2, -lh / 2, lw, lh);
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = theme === 'dark' ? '#F4EFE6' : '#1B1917';
+          ctx.font = `600 ${Math.max(12, Math.min(20, lw * 0.1))}px system-ui, sans-serif`;
+          ctx.fillText(layer.imageName || 'Image', 0, 0);
+        } else {
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = theme === 'dark' ? '#F4EFE6' : '#1B1917';
+          ctx.font = `${lw * 0.7}px system-ui, Segoe UI`;
+          ctx.fillText(layer.emoji || '', 0, 0);
+        }
       }
       ctx.restore();
 
@@ -931,8 +1446,7 @@ export default function App() {
         ctx.strokeStyle = accentColor;
         ctx.lineWidth = Math.max(1.5, 2.2 / canvasZoom);
         ctx.setLineDash([4 / canvasZoom, 4 / canvasZoom]);
-        const es = 256 * layer.scale;
-        ctx.strokeRect(-es / 2 - 2, -es / 2 - 2, es + 4, es + 4);
+        ctx.strokeRect(-lw / 2 - 2, -lh / 2 - 2, lw + 4, lh + 4);
 
         ctx.fillStyle = accentColor;
         ctx.strokeStyle = theme === 'dark' ? '#161513' : '#FDFBF7';
@@ -947,21 +1461,21 @@ export default function App() {
           ctx.stroke();
         };
 
-        drawHandle(-es / 2 - 2, -es / 2 - 2);
-        drawHandle(es / 2 + 2, -es / 2 - 2);
-        drawHandle(-es / 2 - 2, es / 2 + 2);
-        drawHandle(es / 2 + 2, es / 2 + 2);
+        drawHandle(-lw / 2 - 2, -lh / 2 - 2);
+        drawHandle(lw / 2 + 2, -lh / 2 - 2);
+        drawHandle(-lw / 2 - 2, lh / 2 + 2);
+        drawHandle(lw / 2 + 2, lh / 2 + 2);
 
         ctx.strokeStyle = accentColor;
         ctx.lineWidth = Math.max(1.2, 1.5 / canvasZoom);
         ctx.beginPath();
-        ctx.moveTo(0, -es / 2 - 2);
-        ctx.lineTo(0, -es / 2 - 28);
+        ctx.moveTo(0, -lh / 2 - 2);
+        ctx.lineTo(0, -lh / 2 - 28);
         ctx.stroke();
 
         ctx.fillStyle = accentColor;
         ctx.strokeStyle = theme === 'dark' ? '#161513' : '#FDFBF7';
-        drawHandle(0, -es / 2 - 28);
+        drawHandle(0, -lh / 2 - 28);
         ctx.restore();
       }
     });
@@ -969,13 +1483,13 @@ export default function App() {
     ctx.restore();
   };
 
-  const drawExportCanvas = (targetSize: number) => {
+  const drawExportCanvas = (targetSize: number, timeMs: number = animationTimeMsRef.current) => {
     const canvas = document.createElement('canvas');
     canvas.width = targetSize;
     canvas.height = targetSize;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      render2D(ctx, targetSize, null, true);
+      render2D(ctx, targetSize, null, true, timeMs);
     }
     return canvas;
   };
@@ -983,7 +1497,8 @@ export default function App() {
   const addLayer = (emojiChar: string) => {
     pushStateToUndo(layers);
     const newLayer: Layer = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: 'emoji',
       emoji: emojiChar,
       style: selectedStyle,
       x: (Math.random() - 0.5) * 50,
@@ -1003,7 +1518,8 @@ export default function App() {
   const addLayerWithStyle = (emojiChar: string, styleId: string) => {
     pushStateToUndo(layers);
     const newLayer: Layer = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: 'emoji',
       emoji: emojiChar,
       style: styleId,
       x: (Math.random() - 0.5) * 60,
@@ -1024,11 +1540,26 @@ export default function App() {
     for (let i = layers.length - 1; i >= 0; i--) {
       const layer = layers[i];
       if (layer.visible === false) continue;
-      const lx = 512 / 2 + layer.x;
-      const ly = 512 / 2 + layer.y;
-      const es = 256 * layer.scale;
+      const cx = 512 / 2 + layer.x;
+      const cy = 512 / 2 + layer.y;
+      const { width: lw, height: lh } = getLayerDimensions(layer);
 
-      if (artX >= lx - es / 2 && artX <= lx + es / 2 && artY >= ly - es / 2 && artY <= ly + es / 2) {
+      const dx = artX - cx;
+      const dy = artY - cy;
+      const fx = layer.flipX ? -dx : dx;
+      const fy = layer.flipY ? -dy : dy;
+
+      const tx = Math.tan(((layer.skewX || 0) * Math.PI) / 180);
+      const ty = Math.tan(((layer.skewY || 0) * Math.PI) / 180);
+      const det = 1 - tx * ty;
+      const ux = Math.abs(det) > 1e-6 ? (fx - tx * fy) / det : fx;
+      const uy = Math.abs(det) > 1e-6 ? (fy - ty * fx) / det : fy;
+
+      const rotRad = -((layer.rotation || 0) * Math.PI) / 180;
+      const localX = ux * Math.cos(rotRad) - uy * Math.sin(rotRad);
+      const localY = ux * Math.sin(rotRad) + uy * Math.cos(rotRad);
+
+      if (Math.abs(localX) <= lw / 2 && Math.abs(localY) <= lh / 2) {
         return layer.id;
       }
     }
@@ -1193,8 +1724,8 @@ export default function App() {
 
     const clickedId = getLayerAtPosition(artX, artY);
 
-    const clampedX = Math.min(e.clientX, Math.max(12, viewportSize.width - 200));
-    const clampedY = Math.min(e.clientY, Math.max(12, viewportSize.height - 200));
+    const clampedX = Math.min(e.clientX, Math.max(12, viewportSize.width - 210));
+    const clampedY = Math.min(e.clientY, Math.max(12, viewportSize.height - 220));
 
     setContextMenu({
       visible: true,
@@ -1413,7 +1944,7 @@ export default function App() {
     pushStateToUndo(layers);
     const newLayer: Layer = {
       ...layer,
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       x: layer.x + 20,
       y: layer.y + 20,
     };
@@ -1438,25 +1969,116 @@ export default function App() {
   };
 
   const handleDownloadPNG = () => {
-    const exportCanvas = drawExportCanvas(exportSize);
+    const exportCanvas = drawExportCanvas(exportSize, animationTimeMsRef.current);
     const dataUrl = exportCanvas.toDataURL('image/png');
     const link = document.createElement('a');
-    const firstEmoji = layers[0]?.emoji || 'sticker';
-    link.download = `smolji_${firstEmoji}_sticker_${exportSize}px.png`;
+    const stem = sanitizeExportFileStem(layers[0]);
+    link.download = `smolji_${stem}_sticker_${exportSize}px.png`;
     link.href = dataUrl;
     link.click();
     showToast('PNG saved!');
   };
 
+  const handleDownloadGIF = async () => {
+    if (isExportingGif) return;
+    setIsExportingGif(true);
+    try {
+      await ensureLayersLoaded(layers, selectedStyle);
+
+      const activeSequences: DecodedAnimationSequence[] = [];
+      for (const layer of layers) {
+        if (layer.visible === false) continue;
+        const key = getLayerAssetKey(layer, selectedStyle);
+        const asset = key ? imageCache.current[key] : undefined;
+        if (isAnimatedCacheEntry(asset)) {
+          activeSequences.push(asset);
+        }
+      }
+
+      let frameDurations = buildExportFrameDurations(activeSequences);
+      // Cap frame count on 2048px multi-frame exports to stay within browser memory/encoding budgets
+      if (exportSize >= 2048 && frameDurations.length > 24) {
+        const sampled: number[] = [];
+        const groupSize = Math.ceil(frameDurations.length / 24);
+        for (let i = 0; i < frameDurations.length; i += groupSize) {
+          let sumDelay = 0;
+          for (let j = i; j < Math.min(frameDurations.length, i + groupSize); j++) {
+            sumDelay += frameDurations[j];
+          }
+          sampled.push(Math.max(20, sumDelay));
+        }
+        frameDurations = sampled;
+      }
+
+      if (frameDurations.length > 1) {
+        showToast(`Encoding ${frameDurations.length}-frame GIF at ${exportSize}px...`);
+      }
+
+      const frames: GifFrameInput[] = [];
+      const frameCanvas = document.createElement('canvas');
+      frameCanvas.width = exportSize;
+      frameCanvas.height = exportSize;
+      const frameCtx = frameCanvas.getContext('2d', { willReadFrequently: true });
+      if (!frameCtx) {
+        throw new Error('Could not initialize 2D context for GIF export.');
+      }
+
+      let elapsed = 0;
+      for (let i = 0; i < frameDurations.length; i++) {
+        frameCtx.clearRect(0, 0, exportSize, exportSize);
+        render2D(frameCtx, exportSize, null, true, elapsed);
+        const data =
+          typeof frameCtx.getImageData === 'function'
+            ? frameCtx.getImageData(0, 0, exportSize, exportSize).data
+            : new Uint8ClampedArray(exportSize * exportSize * 4);
+        frames.push({
+          data,
+          width: exportSize,
+          height: exportSize,
+          delayMs: frameDurations[i],
+        });
+        elapsed += frameDurations[i];
+      }
+
+      const gifBytes = await encodeGifFrames(frames, {
+        width: exportSize,
+        height: exportSize,
+        loop: activeSequences.length > 0 ? 0 : null,
+      });
+
+      const blob = new Blob([Uint8Array.from(gifBytes)], { type: 'image/gif' });
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const stem = sanitizeExportFileStem(layers[0]);
+      link.href = blobUrl;
+      link.download = `smolji_${stem}_sticker_${exportSize}px.gif`;
+      link.click();
+      if (typeof URL.revokeObjectURL === 'function') {
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      }
+      showToast('GIF saved!');
+    } catch (err) {
+      console.error(err);
+      showToast(err instanceof Error ? err.message : 'Error building GIF sticker.');
+    } finally {
+      setIsExportingGif(false);
+    }
+  };
+
   const handleCopyToClipboard = async () => {
     await ensureLayersLoaded(layers, selectedStyle);
-    const exportCanvas = drawExportCanvas(exportSize);
+    const exportCanvas = drawExportCanvas(exportSize, animationTimeMsRef.current);
     try {
       exportCanvas.toBlob(async (blob) => {
-        if (!blob) throw new Error('Blob creation failed');
-        const item = new ClipboardItem({ 'image/png': blob });
-        await navigator.clipboard.write([item]);
-        showToast('Copied sticker to clipboard!');
+        try {
+          if (!blob) throw new Error('Blob creation failed');
+          const item = new ClipboardItem({ 'image/png': blob });
+          await navigator.clipboard.write([item]);
+          showToast('Copied sticker to clipboard!');
+        } catch (err) {
+          console.error(err);
+          showToast('Clipboard copy failed. Try downloading PNG instead.');
+        }
       }, 'image/png');
     } catch (err) {
       console.error(err);
@@ -1478,7 +2100,7 @@ export default function App() {
 
     try {
       await ensureLayersLoaded(layers, selectedStyle);
-      const exportCanvas = drawExportCanvas(exportSize);
+      const exportCanvas = drawExportCanvas(exportSize, animationTimeMsRef.current);
       const blob = await new Promise<Blob | null>((resolve) =>
         exportCanvas.toBlob(resolve, 'image/png')
       );
@@ -1506,10 +2128,13 @@ export default function App() {
   };
 
   const addToHistory = (url: string, host: string) => {
+    const bottomLayer = layers[0];
+    const isImage = bottomLayer?.type === 'image';
     const newEntry: UploadedHistory = {
       id: Date.now().toString(),
-      emoji: layers[0]?.emoji || '🔥',
-      style: selectedStyle,
+      emoji: bottomLayer?.content || bottomLayer?.emoji || '🔥',
+      style: isImage ? 'custom-image' : selectedStyle,
+      layerType: isImage ? 'image' : 'emoji',
       date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       host,
       url,
@@ -1566,14 +2191,18 @@ export default function App() {
 
       for (const layer of layers) {
         if (layer.visible === false) continue;
-        const imgUrl = getEmojiUrl(layer.emoji || '', style.id);
-        let img = imageCache.current[imgUrl];
+        const isCustomImage = layer.type === 'image';
+        const imgUrl = isCustomImage
+          ? layer.content || ''
+          : getEmojiUrl(layer.emoji || '', style.id);
+        let img = imgUrl ? imageCache.current[imgUrl] : undefined;
 
-        if (!img || img === 'failed') {
-          img = await loadImgPromise(imgUrl);
-          if (img !== 'failed') {
-            imageCache.current[imgUrl] = img;
-          }
+        if (imgUrl && (!img || img === 'failed' || img === 'loading')) {
+          img = await loadAssetForKey(
+            imgUrl,
+            isCustomImage ? layerMayAnimate(layer, style.id) : style.id === 'animated-noto-color-emoji',
+            layer.mimeType
+          );
         }
 
         sCtx.save();
@@ -1601,15 +2230,18 @@ export default function App() {
           sCtx.shadowOffsetY = (shadowOffsetY / 100) * size * layer.scale;
         }
 
-        const emojiSize = 256 * layer.scale * scaleFactor;
+        const { width: layerW, height: layerH } = getLayerDimensions(layer);
+        const drawW = layerW * scaleFactor;
+        const drawH = layerH * scaleFactor;
+        const drawable = resolveDrawableForLayer(img, animationTimeMsRef.current);
 
-        if (img && img !== 'failed' && img !== 'loading') {
-          sCtx.drawImage(img, -emojiSize / 2, -emojiSize / 2, emojiSize, emojiSize);
-        } else {
+        if (drawable) {
+          sCtx.drawImage(drawable, -drawW / 2, -drawH / 2, drawW, drawH);
+        } else if (!isCustomImage) {
           sCtx.textAlign = 'center';
           sCtx.textBaseline = 'middle';
           sCtx.fillStyle = '#FFFFFF';
-          sCtx.font = `${emojiSize * 0.7}px system-ui, Segoe UI`;
+          sCtx.font = `${drawW * 0.7}px system-ui, Segoe UI`;
           sCtx.fillText(layer.emoji || '', 0, 0);
         }
         sCtx.restore();
@@ -1626,7 +2258,9 @@ export default function App() {
       link.href = blobUrl;
       link.download = 'smolji_sticker_pack.zip';
       link.click();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      if (typeof URL.revokeObjectURL === 'function') {
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      }
       showToast('ZIP folder downloaded!');
     } catch {
       showToast('Error building ZIP package.');
@@ -1741,9 +2375,31 @@ export default function App() {
   const activeLayer = layers.find((l) => l.id === selectedLayerId);
 
   return (
-    <div className="w-screen h-screen overflow-hidden relative bg-[#EDE7DC] dark:bg-[#161513] text-[#1B1917] dark:text-[#F4EFE6] flex flex-col font-sans select-none">
+    <div
+      onDragOver={handleStageDragOver}
+      onDragLeave={handleStageDragLeave}
+      onDrop={handleStageDrop}
+      className="w-screen h-screen overflow-hidden relative bg-[#EDE7DC] dark:bg-[#161513] text-[#1B1917] dark:text-[#F4EFE6] flex flex-col font-sans select-none"
+    >
+      {/* File Drag & Drop Overlay */}
+      {isDragOverFile && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-4 z-40 rounded-3xl border-2 border-dashed border-[#C23E1A] dark:border-[#F06A43] bg-[#FDFBF7]/90 dark:bg-[#1F1D1A]/90 flex flex-col items-center justify-center gap-2 shadow-xl backdrop-blur-xs"
+        >
+          <ImagePlus className="w-9 h-9 text-[#C23E1A] dark:text-[#F06A43]" aria-hidden="true" />
+          <p className="font-display text-lg font-extrabold text-[#1B1917] dark:text-[#F4EFE6]">
+            Drop images to add layers
+          </p>
+          <p className="text-xs font-mono text-[#5B534B] dark:text-[#B8AFA4]">
+            PNG, JPEG, GIF, WebP, SVG, AVIF, BMP, or ICO
+          </p>
+        </div>
+      )}
+
       {/* 1. Interactive Canvas Stage */}
       <canvas
+        id="studio-stage-canvas"
         ref={canvasRef}
         onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleCanvasMouseMove}
@@ -1753,7 +2409,7 @@ export default function App() {
         onTouchStart={handleCanvasTouchStart}
         onTouchMove={handleCanvasTouchMove}
         onTouchEnd={handleCanvasTouchEnd}
-        className="absolute inset-0 w-full h-full block touch-none"
+        className="studio-stage-canvas absolute inset-0 w-full h-full block touch-none"
         style={{
           cursor: isSpacePressed ? (isPanning ? 'grabbing' : 'grab') : interactionMode ? 'grabbing' : 'default',
         }}
@@ -1778,140 +2434,218 @@ export default function App() {
           </div>
         </Link>
 
-        {/* Center Undo/Redo + Zoom cluster */}
-        <div className="flex items-center gap-1 bg-[#FDFBF7]/95 dark:bg-[#1F1D1A]/95 border border-[#C7BEB1] dark:border-[#49433B] p-1 rounded-2xl shadow-sm pointer-events-auto">
-          <button
-            type="button"
-            onClick={handleUndo}
-            disabled={undoStack.length === 0}
-            className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] disabled:opacity-35 cursor-pointer transition-colors"
-            title="Undo (Ctrl+Z)"
-            aria-label="Undo"
-          >
-            <Undo2 className="w-4 h-4 mx-auto" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            onClick={handleRedo}
-            disabled={redoStack.length === 0}
-            className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] disabled:opacity-35 cursor-pointer transition-colors"
-            title="Redo (Ctrl+Y)"
-            aria-label="Redo"
-          >
-            <Redo2 className="w-4 h-4 mx-auto" aria-hidden="true" />
-          </button>
-          <span className="w-px h-4 bg-[#D8D0C3] dark:bg-[#3A352F] mx-0.5" aria-hidden="true" />
-          <button
-            type="button"
-            onClick={() => setCanvasZoom((prev) => Math.max(prev - 0.15, 0.25))}
-            className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] cursor-pointer transition-colors"
-            title="Zoom Out"
-            aria-label="Zoom Out"
-          >
-            <Minus className="w-4 h-4 mx-auto" aria-hidden="true" />
-          </button>
-          <span className="text-xs font-mono font-semibold text-[#1B1917] dark:text-[#F4EFE6] px-1.5 text-center min-w-12 tabular-nums">
-            {Math.round(canvasZoom * 100)}%
-          </span>
-          <button
-            type="button"
-            onClick={() => setCanvasZoom((prev) => Math.min(prev + 0.15, 6.0))}
-            className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] cursor-pointer transition-colors"
-            title="Zoom In"
-            aria-label="Zoom In"
-          >
-            <Plus className="w-4 h-4 mx-auto" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setPanX(0);
-              setPanY(0);
-              setCanvasZoom(0.85);
-            }}
-            className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] border-l border-[#D8D0C3] dark:border-[#3A352F] pl-2 ml-0.5 cursor-pointer transition-colors"
-            title="Recenter view"
-            aria-label="Recenter view"
-          >
-            <RefreshCw className="w-4 h-4 mx-auto" aria-hidden="true" />
-          </button>
+        {/* Center Undo/Redo + Zoom + Animation cluster */}
+        <div
+          ref={historyToolbarRef}
+          role="toolbar"
+          focusgroup="toolbar wrap"
+          aria-label="History, zoom, and animation controls"
+          aria-controls="studio-stage-canvas"
+          className="flex items-center gap-1 bg-[#FDFBF7]/95 dark:bg-[#1F1D1A]/95 border border-[#C7BEB1] dark:border-[#49433B] p-1 rounded-2xl shadow-sm pointer-events-auto"
+        >
+          <div role="group" aria-label="History" className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleUndo}
+              aria-disabled={undoStack.length === 0 ? 'true' : undefined}
+              className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] aria-[disabled=true]:opacity-35 cursor-pointer transition-colors"
+              title="Undo (Ctrl+Z)"
+              aria-label="Undo"
+            >
+              <Undo2 className="w-4 h-4 mx-auto" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={handleRedo}
+              aria-disabled={redoStack.length === 0 ? 'true' : undefined}
+              className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] aria-[disabled=true]:opacity-35 cursor-pointer transition-colors"
+              title="Redo (Ctrl+Y)"
+              aria-label="Redo"
+            >
+              <Redo2 className="w-4 h-4 mx-auto" aria-hidden="true" />
+            </button>
+          </div>
+          <span
+            role="separator"
+            aria-orientation="vertical"
+            className="w-px h-4 border-l border-[#D8D0C3] dark:border-[#3A352F] mx-0.5"
+          />
+          <div role="group" aria-label="Viewport zoom" className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setCanvasZoom((prev) => Math.max(prev - 0.15, 0.25))}
+              className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] cursor-pointer transition-colors"
+              title="Zoom Out"
+              aria-label="Zoom Out"
+            >
+              <Minus className="w-4 h-4 mx-auto" aria-hidden="true" />
+            </button>
+            <span className="text-xs font-mono font-semibold text-[#1B1917] dark:text-[#F4EFE6] px-1.5 text-center min-w-12 tabular-nums">
+              {Math.round(canvasZoom * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => setCanvasZoom((prev) => Math.min(prev + 0.15, 6.0))}
+              className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] cursor-pointer transition-colors"
+              title="Zoom In"
+              aria-label="Zoom In"
+            >
+              <Plus className="w-4 h-4 mx-auto" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPanX(0);
+                setPanY(0);
+                setCanvasZoom(0.85);
+              }}
+              className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] border-l border-[#D8D0C3] dark:border-[#3A352F] pl-2 ml-0.5 cursor-pointer transition-colors"
+              title="Recenter view"
+              aria-label="Recenter view"
+            >
+              <RefreshCw className="w-4 h-4 mx-auto" aria-hidden="true" />
+            </button>
+          </div>
+          {hasActiveAnimations && (
+            <>
+              <span
+                role="separator"
+                aria-orientation="vertical"
+                className="w-px h-4 border-l border-[#D8D0C3] dark:border-[#3A352F] mx-0.5"
+              />
+              <div role="group" aria-label="Animation playback" className="flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setIsPlayingAnimation((prev) => !prev)}
+                  aria-pressed={isPlayingAnimation}
+                  aria-label="Play canvas animation"
+                  title={isPlayingAnimation ? 'Pause canvas animation' : 'Play canvas animation'}
+                  className="min-w-8 min-h-8 p-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] rounded-xl text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] aria-pressed:bg-[#C23E1A]/10 dark:aria-pressed:bg-[#F06A43]/15 aria-pressed:text-[#B93815] dark:aria-pressed:text-[#F06A43] cursor-pointer transition-colors"
+                >
+                  {isPlayingAnimation ? (
+                    <Pause className="w-4 h-4 mx-auto" aria-hidden="true" />
+                  ) : (
+                    <Play className="w-4 h-4 mx-auto" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Right actions & drawer toggles */}
-        <div className="flex items-center gap-1.5 bg-[#FDFBF7]/95 dark:bg-[#1F1D1A]/95 border border-[#C7BEB1] dark:border-[#49433B] p-1 rounded-2xl shadow-sm pointer-events-auto">
-          <button
-            type="button"
-            onClick={() => setLeftPanelOpen((prev) => !prev)}
-            aria-pressed={leftPanelOpen}
-            className={`min-h-8 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
-              leftPanelOpen
-                ? 'border-[#C23E1A]/60 dark:border-[#F06A43]/60 bg-[#C23E1A]/10 dark:bg-[#F06A43]/15 text-[#B93815] dark:text-[#F06A43]'
-                : 'border-transparent text-[#5B534B] dark:text-[#B8AFA4] hover:bg-[#EDE7DC] dark:hover:bg-[#292622]'
-            }`}
-            title="Toggle Asset Library Panel"
-          >
-            <Smile className="w-4 h-4" aria-hidden="true" />
-            <span className="hidden lg:inline">Library</span>
-          </button>
+        <div
+          ref={actionsToolbarRef}
+          role="toolbar"
+          focusgroup="toolbar wrap"
+          aria-label="Panels, export, and studio settings"
+          aria-controls="studio-stage-canvas"
+          className="flex items-center gap-1.5 bg-[#FDFBF7]/95 dark:bg-[#1F1D1A]/95 border border-[#C7BEB1] dark:border-[#49433B] p-1 rounded-2xl shadow-sm pointer-events-auto"
+        >
+          <div role="group" aria-label="Panels" className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setLeftPanelOpen((prev) => !prev)}
+              aria-pressed={leftPanelOpen}
+              className={`min-h-8 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                leftPanelOpen
+                  ? 'border-[#C23E1A]/60 dark:border-[#F06A43]/60 bg-[#C23E1A]/10 dark:bg-[#F06A43]/15 text-[#B93815] dark:text-[#F06A43]'
+                  : 'border-transparent text-[#5B534B] dark:text-[#B8AFA4] hover:bg-[#EDE7DC] dark:hover:bg-[#292622]'
+              }`}
+              title="Toggle Asset Library Panel"
+            >
+              <Smile className="w-4 h-4" aria-hidden="true" />
+              <span className="hidden lg:inline">Library</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setRightPanelOpen((prev) => !prev)}
-            aria-pressed={rightPanelOpen}
-            className={`min-h-8 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
-              rightPanelOpen
-                ? 'border-[#C23E1A]/60 dark:border-[#F06A43]/60 bg-[#C23E1A]/10 dark:bg-[#F06A43]/15 text-[#B93815] dark:text-[#F06A43]'
-                : 'border-transparent text-[#5B534B] dark:text-[#B8AFA4] hover:bg-[#EDE7DC] dark:hover:bg-[#292622]'
-            }`}
-            title="Toggle Layer Properties Panel"
-          >
-            <Layers className="w-4 h-4" aria-hidden="true" />
-            <span className="hidden lg:inline">Properties</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setRightPanelOpen((prev) => !prev)}
+              aria-pressed={rightPanelOpen}
+              className={`min-h-8 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                rightPanelOpen
+                  ? 'border-[#C23E1A]/60 dark:border-[#F06A43]/60 bg-[#C23E1A]/10 dark:bg-[#F06A43]/15 text-[#B93815] dark:text-[#F06A43]'
+                  : 'border-transparent text-[#5B534B] dark:text-[#B8AFA4] hover:bg-[#EDE7DC] dark:hover:bg-[#292622]'
+              }`}
+              title="Toggle Layer Properties Panel"
+            >
+              <Layers className="w-4 h-4" aria-hidden="true" />
+              <span className="hidden lg:inline">Properties</span>
+            </button>
+          </div>
 
-          <button
-            type="button"
-            onClick={handleCopyToClipboard}
-            className="min-w-8 min-h-8 p-2 bg-[#EDE7DC] dark:bg-[#292622] hover:bg-[#E2DBD0] dark:hover:bg-[#35312C] text-[#1B1917] dark:text-[#F4EFE6] rounded-xl text-xs font-semibold transition-colors border border-[#8F8578] dark:border-[#756C61] flex items-center justify-center cursor-pointer"
-            title="Copy PNG sticker image to clipboard"
-            aria-label="Copy PNG sticker image to clipboard"
-          >
-            <Copy className="w-4 h-4" aria-hidden="true" />
-          </button>
+          <span
+            role="separator"
+            aria-orientation="vertical"
+            className="w-px h-4 border-l border-[#D8D0C3] dark:border-[#3A352F] mx-0.5"
+          />
 
-          <button
-            type="button"
-            onClick={handleDownloadPNG}
-            className="min-h-8 px-3.5 py-1.5 bg-[#C23E1A] hover:bg-[#A83314] text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
-            title="Download PNG sticker file"
-          >
-            <Download className="w-4 h-4" aria-hidden="true" />
-            <span className="hidden sm:inline">Save PNG</span>
-          </button>
+          <div role="group" aria-label="Export sticker" className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleCopyToClipboard}
+              className="min-w-8 min-h-8 p-2 bg-[#EDE7DC] dark:bg-[#292622] hover:bg-[#E2DBD0] dark:hover:bg-[#35312C] text-[#1B1917] dark:text-[#F4EFE6] rounded-xl text-xs font-semibold transition-colors border border-[#8F8578] dark:border-[#756C61] flex items-center justify-center cursor-pointer"
+              title="Copy PNG sticker image to clipboard"
+              aria-label="Copy PNG sticker image to clipboard"
+            >
+              <Copy className="w-4 h-4" aria-hidden="true" />
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setTheme(toggleThemePreference(resolveTheme()))}
-            className="min-w-8 min-h-8 p-2 rounded-xl border border-[#8F8578] dark:border-[#756C61] text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] hover:bg-[#EDE7DC] dark:hover:bg-[#292622] transition-colors cursor-pointer"
-            title="Toggle theme"
-            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          >
-            {theme === 'dark' ? (
-              <Sun className="w-4 h-4 text-[#F06A43]" aria-hidden="true" />
-            ) : (
-              <Moon className="w-4 h-4" aria-hidden="true" />
-            )}
-          </button>
+            <button
+              type="button"
+              onClick={() => void handleDownloadGIF()}
+              aria-disabled={isExportingGif ? 'true' : undefined}
+              className="min-h-8 px-3 py-1.5 bg-[#EDE7DC] dark:bg-[#292622] hover:bg-[#E2DBD0] dark:hover:bg-[#35312C] text-[#1B1917] dark:text-[#F4EFE6] rounded-xl text-xs font-bold transition-colors border border-[#8F8578] dark:border-[#756C61] flex items-center gap-1.5 aria-[disabled=true]:opacity-50 cursor-pointer"
+              title="Download GIF sticker file"
+              aria-label={isExportingGif ? 'Encoding GIF...' : 'Save GIF sticker'}
+            >
+              <Film className="w-4 h-4 text-[#B93815] dark:text-[#F06A43]" aria-hidden="true" />
+              <span className="hidden sm:inline">{isExportingGif ? 'Encoding...' : 'Save GIF'}</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            className="min-w-8 min-h-8 p-2 rounded-xl border border-[#8F8578] dark:border-[#756C61] text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] hover:bg-[#EDE7DC] dark:hover:bg-[#292622] transition-colors cursor-pointer"
-            title="Settings"
-            aria-label="Open API Settings and Licenses"
-          >
-            <Settings className="w-4 h-4" aria-hidden="true" />
-          </button>
+            <button
+              type="button"
+              onClick={handleDownloadPNG}
+              className="min-h-8 px-3.5 py-1.5 bg-[#C23E1A] hover:bg-[#A83314] text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+              title="Download PNG sticker file"
+              aria-label="Save PNG sticker"
+            >
+              <Download className="w-4 h-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Save PNG</span>
+            </button>
+          </div>
+
+          <span
+            role="separator"
+            aria-orientation="vertical"
+            className="w-px h-4 border-l border-[#D8D0C3] dark:border-[#3A352F] mx-0.5"
+          />
+
+          <div role="group" aria-label="Appearance and settings" className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setTheme(toggleThemePreference(resolveTheme()))}
+              className="min-w-8 min-h-8 p-2 rounded-xl border border-[#8F8578] dark:border-[#756C61] text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] hover:bg-[#EDE7DC] dark:hover:bg-[#292622] transition-colors cursor-pointer"
+              title="Toggle theme"
+              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            >
+              {theme === 'dark' ? (
+                <Sun className="w-4 h-4 text-[#F06A43]" aria-hidden="true" />
+              ) : (
+                <Moon className="w-4 h-4" aria-hidden="true" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="min-w-8 min-h-8 p-2 rounded-xl border border-[#8F8578] dark:border-[#756C61] text-[#5B534B] dark:text-[#B8AFA4] hover:text-[#1B1917] dark:hover:text-[#F4EFE6] hover:bg-[#EDE7DC] dark:hover:bg-[#292622] transition-colors cursor-pointer"
+              title="Settings"
+              aria-label="Open API Settings and Licenses"
+            >
+              <Settings className="w-4 h-4" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1985,6 +2719,54 @@ export default function App() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Custom External & Clipboard Images */}
+          <div className="shrink-0 p-2.5 bg-[#EDE7DC]/55 dark:bg-[#292622]/55 border border-[#D8D0C3] dark:border-[#3A352F] rounded-xl space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[0.6875rem] font-semibold text-[#5B534B] dark:text-[#B8AFA4]">
+                Custom Images
+              </span>
+              <span className="text-[0.625rem] font-mono text-[#5B534B] dark:text-[#B8AFA4]">
+                PNG • JPG • GIF • WebP • SVG
+              </span>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".png,.jpg,.jpeg,.gif,.webp,.svg,.avif,.bmp,.ico,image/*"
+              multiple
+              aria-label="Upload external image files"
+              className="sr-only"
+              onChange={(e) => {
+                const files = e.target.files ? Array.from(e.target.files) : [];
+                if (files.length > 0) {
+                  void ingestExternalImageFiles(files);
+                }
+                e.target.value = '';
+              }}
+            />
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="min-h-8 px-2.5 py-1.5 rounded-lg border border-[#8F8578] dark:border-[#756C61] bg-[#FDFBF7] dark:bg-[#1F1D1A] hover:bg-[#EDE7DC] dark:hover:bg-[#292622] text-xs font-semibold text-[#1B1917] dark:text-[#F4EFE6] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <ImagePlus className="w-3.5 h-3.5 text-[#B93815] dark:text-[#F06A43]" aria-hidden="true" />
+                <span>Add Image</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void handlePasteImageFromClipboard()}
+                className="min-h-8 px-2.5 py-1.5 rounded-lg border border-[#8F8578] dark:border-[#756C61] bg-[#FDFBF7] dark:bg-[#1F1D1A] hover:bg-[#EDE7DC] dark:hover:bg-[#292622] text-xs font-semibold text-[#1B1917] dark:text-[#F4EFE6] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <ClipboardPaste className="w-3.5 h-3.5 text-[#B93815] dark:text-[#F06A43]" aria-hidden="true" />
+                <span>Paste Image</span>
+              </button>
+            </div>
+            <p className="text-[0.6875rem] text-[#5B534B] dark:text-[#B8AFA4] leading-tight">
+              Or press Ctrl+V / drag &amp; drop onto canvas.
+            </p>
           </div>
 
           {/* Detected emojis from textarea */}
@@ -2129,10 +2911,23 @@ export default function App() {
                       aria-pressed={isSelected}
                       className="flex-1 min-w-0 flex items-center gap-2 py-0.5 px-1 text-left cursor-pointer rounded"
                     >
-                      <span className="text-lg shrink-0">{layer.emoji}</span>
+                      {layer.type === 'image' && layer.content ? (
+                        <img
+                          src={layer.content}
+                          alt=""
+                          className="w-6 h-6 rounded object-contain bg-[#EDE7DC] dark:bg-[#292622] shrink-0"
+                        />
+                      ) : (
+                        <span className="text-lg shrink-0">{layer.emoji}</span>
+                      )}
                       <span className="flex flex-col min-w-0">
                         <span className="text-xs font-bold truncate flex items-center gap-1.5">
                           <span>Layer {layers.length - idx}</span>
+                          {isAnimatedLayer(layer) && (
+                            <span className="text-[0.625rem] font-mono font-bold px-1 rounded bg-[#C23E1A]/15 dark:bg-[#F06A43]/20 text-[#B93815] dark:text-[#F06A43]">
+                              ANIM
+                            </span>
+                          )}
                           {isHidden && (
                             <span className="text-[0.6875rem] font-mono font-normal px-1 rounded bg-[#EDE7DC] dark:bg-[#292622] text-[#5B534B] dark:text-[#B8AFA4]">
                               Hidden
@@ -2140,7 +2935,9 @@ export default function App() {
                           )}
                         </span>
                         <span className="text-[0.6875rem] text-[#5B534B] dark:text-[#B8AFA4] truncate font-mono">
-                          {EMOJI_STYLES.find((s) => s.id === layer.style)?.name || layer.style}
+                          {layer.type === 'image'
+                            ? layer.imageName || 'Custom Image'
+                            : EMOJI_STYLES.find((s) => s.id === layer.style)?.name || layer.style}
                         </span>
                       </span>
                     </button>
@@ -2254,29 +3051,88 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="layer-style"
-                  className="block text-[0.6875rem] text-[#5B534B] dark:text-[#B8AFA4] font-semibold"
-                >
-                  Visual Style
-                </label>
-                <StudioSelect
-                  id="layer-style"
-                  ariaLabel="Visual Style"
-                  value={activeLayer.style || selectedStyle}
-                  options={EMOJI_STYLES.map((s) => ({
-                    value: s.id,
-                    label: s.name,
-                    badge: s.format,
-                  }))}
-                  onChange={(styleId) =>
-                    setLayers((prev) =>
-                      prev.map((l) => (l.id === activeLayer.id ? { ...l, style: styleId } : l))
-                    )
-                  }
-                />
-              </div>
+              {activeLayer.type === 'image' ? (
+                <div className="space-y-2 p-2.5 rounded-xl bg-[#EDE7DC]/65 dark:bg-[#292622]/70 border border-[#C7BEB1] dark:border-[#4D463E]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[0.6875rem] text-[#5B534B] dark:text-[#B8AFA4] font-semibold">
+                      Image Source
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[0.625rem] font-mono px-1.5 py-0.5 rounded bg-[#FDFBF7] dark:bg-[#1F1D1A] border border-[#D8D0C3] dark:border-[#3A352F] text-[#5B534B] dark:text-[#B8AFA4]">
+                        {(activeLayer.mimeType || 'image/png').replace('image/', '').split('+')[0].toUpperCase()}
+                      </span>
+                      {isAnimatedLayer(activeLayer) && (
+                        <span className="text-[0.625rem] font-mono font-bold px-1.5 py-0.5 rounded bg-[#C23E1A]/15 dark:bg-[#F06A43]/20 text-[#B93815] dark:text-[#F06A43]">
+                          Animated
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    {activeLayer.content && (
+                      <img
+                        src={activeLayer.content}
+                        alt={activeLayer.imageName || 'Custom image preview'}
+                        className="w-10 h-10 rounded-lg object-contain bg-[#FDFBF7] dark:bg-[#161513] border border-[#D8D0C3] dark:border-[#3A352F] shrink-0"
+                      />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-[#1B1917] dark:text-[#F4EFE6] truncate">
+                        {activeLayer.imageName || 'Custom Image'}
+                      </p>
+                      <p className="text-[0.6875rem] font-mono text-[#5B534B] dark:text-[#B8AFA4]">
+                        {activeLayer.naturalWidth || 256}×{activeLayer.naturalHeight || 256}px
+                      </p>
+                    </div>
+                  </div>
+                  <input
+                    ref={replaceFileInputRef}
+                    type="file"
+                    accept=".png,.jpg,.jpeg,.gif,.webp,.svg,.avif,.bmp,.ico,image/*"
+                    aria-label="Replace layer image file"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const files = e.target.files ? Array.from(e.target.files) : [];
+                      if (files.length > 0 && activeLayer) {
+                        void ingestExternalImageFiles(files, activeLayer.id);
+                      }
+                      e.target.value = '';
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => replaceFileInputRef.current?.click()}
+                    className="w-full min-h-8 px-2.5 py-1.5 rounded-lg border border-[#8F8578] dark:border-[#756C61] bg-[#FDFBF7] dark:bg-[#1F1D1A] hover:bg-[#EDE7DC] dark:hover:bg-[#292622] text-xs font-semibold text-[#1B1917] dark:text-[#F4EFE6] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <ImagePlus className="w-3.5 h-3.5 text-[#B93815] dark:text-[#F06A43]" aria-hidden="true" />
+                    <span>Replace Image</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="layer-style"
+                    className="block text-[0.6875rem] text-[#5B534B] dark:text-[#B8AFA4] font-semibold"
+                  >
+                    Visual Style
+                  </label>
+                  <StudioSelect
+                    id="layer-style"
+                    ariaLabel="Visual Style"
+                    value={activeLayer.style || selectedStyle}
+                    options={EMOJI_STYLES.map((s) => ({
+                      value: s.id,
+                      label: s.name,
+                      badge: s.format,
+                    }))}
+                    onChange={(styleId) =>
+                      setLayers((prev) =>
+                        prev.map((l) => (l.id === activeLayer.id ? { ...l, style: styleId } : l))
+                      )
+                    }
+                  />
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-x-3 gap-y-3">
                 <StudioSlider
@@ -2376,54 +3232,56 @@ export default function App() {
                 />
               </div>
 
-              {/* Readable Style Variations Explorer */}
-              <div className="space-y-1.5">
-                <span className="text-[0.6875rem] font-semibold text-[#5B534B] dark:text-[#B8AFA4] block">
-                  Style Variations Explorer
-                </span>
-                <div className="grid grid-cols-3 gap-1.5 max-h-36 overflow-y-auto p-1.5 bg-[#EDE7DC]/55 dark:bg-[#292622]/55 border border-[#D8D0C3] dark:border-[#3A352F] rounded-xl">
-                  {EMOJI_STYLES.map((style) => {
-                    const url = getEmojiUrl(activeLayer.emoji || '', style.id);
-                    const isActive = activeLayer.style === style.id;
-                    return (
-                      <div key={style.id} className="relative group">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setLayers((prev) =>
-                              prev.map((l) => (l.id === activeLayer.id ? { ...l, style: style.id } : l))
-                            )
-                          }
-                          aria-pressed={isActive}
-                          className={`w-full p-1.5 border rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors ${
-                            isActive
-                              ? 'border-[#C23E1A] dark:border-[#F06A43] bg-[#C23E1A]/10 dark:bg-[#F06A43]/15'
-                              : 'border-[#D8D0C3] dark:border-[#3A352F] bg-[#FDFBF7] dark:bg-[#1F1D1A] hover:border-[#8F8578] dark:hover:border-[#756C61]'
-                          }`}
-                        >
-                          <img src={url} alt={style.name} loading="lazy" className="w-6 h-6 object-contain" />
-                          <span className="text-[0.6875rem] text-[#5B534B] dark:text-[#B8AFA4] text-center truncate w-full font-medium mt-1">
-                            {style.name}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addLayerWithStyle(activeLayer.emoji || '', style.id)}
-                          className="absolute -top-1 -right-1 bg-[#C23E1A] hover:bg-[#A83314] text-white min-w-6 min-h-6 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold opacity-85 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity shadow-sm cursor-pointer"
-                          title="Spawn new Layer in this style"
-                          aria-label={`Spawn new Layer in ${style.name} style`}
-                        >
-                          +
-                        </button>
-                      </div>
-                    );
-                  })}
+              {/* Readable Style Variations Explorer (emoji layers only) */}
+              {activeLayer.type !== 'image' && (
+                <div className="space-y-1.5">
+                  <span className="text-[0.6875rem] font-semibold text-[#5B534B] dark:text-[#B8AFA4] block">
+                    Style Variations Explorer
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5 max-h-36 overflow-y-auto p-1.5 bg-[#EDE7DC]/55 dark:bg-[#292622]/55 border border-[#D8D0C3] dark:border-[#3A352F] rounded-xl">
+                    {EMOJI_STYLES.map((style) => {
+                      const url = getEmojiUrl(activeLayer.emoji || '', style.id);
+                      const isActive = activeLayer.style === style.id;
+                      return (
+                        <div key={style.id} className="relative group">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setLayers((prev) =>
+                                prev.map((l) => (l.id === activeLayer.id ? { ...l, style: style.id } : l))
+                              )
+                            }
+                            aria-pressed={isActive}
+                            className={`w-full p-1.5 border rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors ${
+                              isActive
+                                ? 'border-[#C23E1A] dark:border-[#F06A43] bg-[#C23E1A]/10 dark:bg-[#F06A43]/15'
+                                : 'border-[#D8D0C3] dark:border-[#3A352F] bg-[#FDFBF7] dark:bg-[#1F1D1A] hover:border-[#8F8578] dark:hover:border-[#756C61]'
+                            }`}
+                          >
+                            <img src={url} alt={style.name} loading="lazy" className="w-6 h-6 object-contain" />
+                            <span className="text-[0.6875rem] text-[#5B534B] dark:text-[#B8AFA4] text-center truncate w-full font-medium mt-1">
+                              {style.name}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => addLayerWithStyle(activeLayer.emoji || '', style.id)}
+                            className="absolute -top-1 -right-1 bg-[#C23E1A] hover:bg-[#A83314] text-white min-w-6 min-h-6 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold opacity-85 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity shadow-sm cursor-pointer"
+                            title="Spawn new Layer in this style"
+                            aria-label={`Spawn new Layer in ${style.name} style`}
+                          >
+                            +
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           ) : (
             <div className="border-t border-[#D8D0C3] dark:border-[#3A352F] pt-4 text-center text-xs text-[#5B534B] dark:text-[#B8AFA4] shrink-0">
-              No layer selected. Select an emoji on the canvas or add one from the library.
+              No layer selected. Select a layer on the canvas or add an emoji or image.
             </div>
           )}
 
@@ -2518,8 +3376,8 @@ export default function App() {
                 <span className="text-xs font-medium text-[#5B534B] dark:text-[#B8AFA4] block">
                   Export Size
                 </span>
-                <div className="grid grid-cols-4 gap-1 bg-[#EDE7DC] dark:bg-[#292622] p-1 border border-[#8F8578] dark:border-[#756C61] rounded-xl">
-                  {[128, 256, 512, 1024].map((sizeOption) => {
+                <div className="grid grid-cols-3 gap-1 bg-[#EDE7DC] dark:bg-[#292622] p-1 border border-[#8F8578] dark:border-[#756C61] rounded-xl">
+                  {EXPORT_SIZES.map((sizeOption) => {
                     const isActive = exportSize === sizeOption;
                     return (
                       <button
@@ -2815,7 +3673,15 @@ export default function App() {
                       className="flex items-center justify-between p-1.5 bg-[#FDFBF7] dark:bg-[#1F1D1A] rounded-lg border border-[#D8D0C3] dark:border-[#3A352F] text-xs"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-base shrink-0">{item.emoji}</span>
+                        {item.layerType === 'image' || item.emoji.startsWith('data:') ? (
+                          <img
+                            src={item.emoji}
+                            alt="Uploaded custom layer"
+                            className="w-6 h-6 rounded object-contain bg-[#EDE7DC] dark:bg-[#292622] shrink-0"
+                          />
+                        ) : (
+                          <span className="text-base shrink-0">{item.emoji}</span>
+                        )}
                         <div className="flex flex-col min-w-0">
                           <span className="text-[0.6875rem] text-[#5B534B] dark:text-[#B8AFA4] font-mono">
                             {item.host} • {item.date}
@@ -2963,6 +3829,17 @@ export default function App() {
                 type="button"
                 role="menuitem"
                 onClick={() => {
+                  setContextMenu((prev) => ({ ...prev, visible: false }));
+                  void handlePasteImageFromClipboard();
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-[#EDE7DC] dark:hover:bg-[#292622] flex items-center gap-2 cursor-pointer"
+              >
+                <ClipboardPaste className="w-3.5 h-3.5 text-[#B93815] dark:text-[#F06A43]" aria-hidden="true" /> Paste Image from Clipboard
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
                   setPanX(0);
                   setPanY(0);
                   setCanvasZoom(0.85);
@@ -2977,17 +3854,24 @@ export default function App() {
         </div>
       )}
 
-      {/* Live Status Toast */}
-      {successMessage && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 bg-[#1B1917] dark:bg-[#F4EFE6] text-[#FDFBF7] dark:text-[#161513] border border-[#C23E1A] dark:border-[#F06A43] font-semibold px-4 py-2 rounded-full shadow-lg animate-fade-in flex items-center gap-2 text-xs pointer-events-auto"
-        >
-          <Check className="w-4 h-4 text-[#F06A43] dark:text-[#C23E1A]" aria-hidden="true" />
-          <span>{successMessage}</span>
-        </div>
-      )}
+      {/* Persistent Live Status Toast Region */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={
+          successMessage
+            ? 'fixed bottom-16 left-1/2 -translate-x-1/2 z-50 bg-[#1B1917] dark:bg-[#F4EFE6] text-[#FDFBF7] dark:text-[#161513] border border-[#C23E1A] dark:border-[#F06A43] font-semibold px-4 py-2 rounded-full shadow-lg animate-fade-in flex items-center gap-2 text-xs pointer-events-auto'
+            : 'sr-only'
+        }
+      >
+        {successMessage ? (
+          <>
+            <Check className="w-4 h-4 text-[#F06A43] dark:text-[#C23E1A]" aria-hidden="true" />
+            <span>{successMessage}</span>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
