@@ -88,13 +88,32 @@ describe('Emoji Utilities', () => {
   });
 
   describe('uploadToImgBB', () => {
-    it('throws an error when API key is missing', async () => {
+    it('throws an error when API key is missing or whitespace', async () => {
       await expect(uploadToImgBB('data:image/png;base64,AAAA', '')).rejects.toThrow(
+        'ImgBB API Key is required. Please set it in Settings.'
+      );
+      await expect(uploadToImgBB('data:image/png;base64,AAAA', '   ')).rejects.toThrow(
         'ImgBB API Key is required. Please set it in Settings.'
       );
     });
 
-    it('uploads a base64 dataURL string and returns the hosted URL', async () => {
+    it('throws an error when image payload is empty or malformed data URL', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(uploadToImgBB('data:image/png;base64,', 'test-key')).rejects.toThrow(
+        'Image data is empty or invalid.'
+      );
+      await expect(uploadToImgBB('data:image/png;base64', 'test-key')).rejects.toThrow(
+        'Image data is empty or invalid.'
+      );
+      await expect(uploadToImgBB(new Blob([]), 'test-key')).rejects.toThrow(
+        'Image data is empty or invalid.'
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('uploads a base64 dataURL string without data URL prefix and returns the hosted URL', async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -104,15 +123,20 @@ describe('Emoji Utilities', () => {
       });
       vi.stubGlobal('fetch', fetchMock);
 
-      const url = await uploadToImgBB('data:image/png;base64,iVBORw0KGgo=', 'test-imgbb-key');
+      const url = await uploadToImgBB('data:image/png;base64,iVBORw0KGgo=', ' test-imgbb-key ');
       expect(url).toBe('https://i.ibb.co/example/sticker.png');
       expect(fetchMock).toHaveBeenCalledWith(
         'https://api.imgbb.com/1/upload?key=test-imgbb-key',
         expect.objectContaining({ method: 'POST' })
       );
+
+      const [, init] = fetchMock.mock.calls[0];
+      const sentBody = init.body as FormData;
+      expect(sentBody).toBeInstanceOf(FormData);
+      expect(sentBody.get('image')).toBe('iVBORw0KGgo=');
     });
 
-    it('uploads a Blob instance by converting it via FileReader', async () => {
+    it('uploads a Blob instance as pure base64 (stripping FileReader data URL prefix)', async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -125,6 +149,46 @@ describe('Emoji Utilities', () => {
       const blob = new Blob(['fake-png-bytes'], { type: 'image/png' });
       const url = await uploadToImgBB(blob, 'blob-key');
       expect(url).toBe('https://i.ibb.co/blob/sticker.png');
+
+      const [, init] = fetchMock.mock.calls[0];
+      const sentBody = init.body as FormData;
+      const imageField = sentBody.get('image');
+      expect(typeof imageField).toBe('string');
+      expect(imageField).toBe(Buffer.from('fake-png-bytes').toString('base64'));
+      expect(String(imageField)).not.toContain('data:');
+    });
+
+    it('preserves remote image URLs passed directly to uploadToImgBB', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { url: 'https://i.ibb.co/url/sticker.png' },
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const url = await uploadToImgBB('https://example.com/sticker.png', 'test-key');
+      expect(url).toBe('https://i.ibb.co/url/sticker.png');
+      const sentBody = fetchMock.mock.calls[0][1].body as FormData;
+      expect(sentBody.get('image')).toBe('https://example.com/sticker.png');
+    });
+
+    it('rejects when FileReader yields non-string result', async () => {
+      class NullResultFileReader {
+        result: string | ArrayBuffer | null = null;
+        onloadend: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        readAsDataURL() {
+          this.result = new ArrayBuffer(4);
+          this.onloadend?.();
+        }
+      }
+      vi.stubGlobal('FileReader', NullResultFileReader);
+
+      await expect(uploadToImgBB(new Blob(['abc'], { type: 'image/png' }), 'test-key')).rejects.toThrow(
+        'Failed to read blob as Base64 string'
+      );
     });
 
     it('throws the API error message when ImgBB responds with an error', async () => {
@@ -142,12 +206,26 @@ describe('Emoji Utilities', () => {
       await expect(uploadToImgBB('rawBase64String', 'bad-key')).rejects.toThrow('Invalid API v1 key.');
     });
 
-    it('throws default error message when ImgBB response lacks specific error details', async () => {
+    it('throws default error message when ImgBB response lacks specific error details or valid JSON', async () => {
       vi.stubGlobal(
         'fetch',
         vi.fn().mockResolvedValue({
           ok: false,
           json: async () => ({ success: false }),
+        })
+      );
+
+      await expect(uploadToImgBB('rawBase64String', 'bad-key')).rejects.toThrow(
+        'Failed to upload image to ImgBB'
+      );
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          json: async () => {
+            throw new SyntaxError('Unexpected token <');
+          },
         })
       );
 
@@ -164,7 +242,7 @@ describe('Emoji Utilities', () => {
       );
     });
 
-    it('uploads a Blob or dataURL to Imgur and returns the image link', async () => {
+    it('uploads a Blob or dataURL to Imgur as pure base64 and returns the image link', async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -187,9 +265,17 @@ describe('Emoji Utilities', () => {
           },
         })
       );
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+        image: Buffer.from('fake-image').toString('base64'),
+        type: 'base64',
+      });
 
       const linkFromString = await uploadToImgur('data:image/png;base64,AAAA', 'imgur-client-123');
       expect(linkFromString).toBe('https://i.imgur.com/sticker.png');
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+        image: 'AAAA',
+        type: 'base64',
+      });
     });
 
     it('throws API error message or fallback when Imgur upload fails', async () => {
@@ -211,6 +297,20 @@ describe('Emoji Utilities', () => {
         vi.fn().mockResolvedValue({
           ok: false,
           json: async () => ({ success: false }),
+        })
+      );
+
+      await expect(uploadToImgur('rawBase64', 'client-id')).rejects.toThrow(
+        'Failed to upload image to Imgur'
+      );
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          json: async () => {
+            throw new SyntaxError('Unexpected token <');
+          },
         })
       );
 
