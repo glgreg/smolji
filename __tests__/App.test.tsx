@@ -457,17 +457,40 @@ describe('App Component (Smolji Studio)', () => {
     fireEvent.click(screen.getByText('Save'));
     expect(screen.getByText('API Keys saved successfully!')).toBeTruthy();
 
-    // 5. Upload via ImgBB
+    // 5. Upload via ImgBB and verify pure base64 payload (no data: prefix)
     fireEvent.click(screen.getByText('Link via ImgBB'));
     await waitFor(() => {
       expect(screen.getByDisplayValue('https://i.ibb.co/mock/sticker.png')).toBeTruthy();
     });
+    const imgbbCall = fetchMock.mock.calls.find(([url]) => String(url).includes('imgbb'));
+    expect(imgbbCall).toBeTruthy();
+    const imgbbForm = imgbbCall?.[1]?.body as FormData;
+    expect(imgbbForm.get('image')).toBe(Buffer.from('png-binary').toString('base64'));
 
-    // 6. Upload via Imgur
+    // 6. Upload via Imgur and verify pure base64 payload
     fireEvent.click(screen.getByText('Link via Imgur'));
     await waitFor(() => {
       expect(screen.getByDisplayValue('https://i.imgur.com/mock.png')).toBeTruthy();
     });
+    const imgurCall = fetchMock.mock.calls.find(([url]) => String(url).includes('imgur'));
+    expect(imgurCall).toBeTruthy();
+    expect(JSON.parse(String(imgurCall?.[1]?.body))).toEqual({
+      image: Buffer.from('png-binary').toString('base64'),
+      type: 'base64',
+    });
+
+    // 7. Failed upload resets uploading button state and shows error toast
+    const spyError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ success: false, error: { message: 'Invalid base64 string.' } }),
+    });
+    fireEvent.click(screen.getByText('Link via ImgBB'));
+    await waitFor(() => {
+      expect(screen.getByText('Invalid base64 string.')).toBeTruthy();
+    });
+    expect(screen.getByText('Link via ImgBB')).toBeTruthy();
+    expect(spyError).toHaveBeenCalled();
   });
 
   it('supports layer visibility toggling, catalog category & keyword filtering, and overview link', () => {
