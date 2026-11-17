@@ -1465,7 +1465,7 @@ export default function App() {
   };
 
   const handleUploadImage = async (service: 'imgbb' | 'imgur') => {
-    const apiKey = service === 'imgbb' ? apiKeys.imgbb : apiKeys.imgur;
+    const apiKey = (service === 'imgbb' ? apiKeys.imgbb : apiKeys.imgur).trim();
 
     if (!apiKey) {
       setSettingsOpen(true);
@@ -1476,34 +1476,33 @@ export default function App() {
     setIsUploading(service);
     setUploadResultUrl('');
 
-    await ensureLayersLoaded(layers, selectedStyle);
-    const exportCanvas = drawExportCanvas(exportSize);
-    exportCanvas.toBlob(async (blob) => {
+    try {
+      await ensureLayersLoaded(layers, selectedStyle);
+      const exportCanvas = drawExportCanvas(exportSize);
+      const blob = await new Promise<Blob | null>((resolve) =>
+        exportCanvas.toBlob(resolve, 'image/png')
+      );
+
       if (!blob) {
-        setIsUploading('');
         showToast('Image processing error');
         return;
       }
 
-      try {
-        let uploadedUrl = '';
-        if (service === 'imgbb') {
-          uploadedUrl = await uploadToImgBB(blob, apiKeys.imgbb);
-        } else {
-          uploadedUrl = await uploadToImgur(blob, apiKeys.imgur);
-        }
+      const uploadedUrl =
+        service === 'imgbb'
+          ? await uploadToImgBB(blob, apiKey)
+          : await uploadToImgur(blob, apiKey);
 
-        setUploadResultUrl(uploadedUrl);
-        addToHistory(uploadedUrl, service === 'imgbb' ? 'ImgBB' : 'Imgur');
-        showToast('Public image URL created!');
-      } catch (err: unknown) {
-        console.error(err);
-        const msg = err instanceof Error ? err.message : 'Error occurred during upload';
-        showToast(msg);
-      } finally {
-        setIsUploading('');
-      }
-    }, 'image/png');
+      setUploadResultUrl(uploadedUrl);
+      addToHistory(uploadedUrl, service === 'imgbb' ? 'ImgBB' : 'Imgur');
+      showToast('Public image URL created!');
+    } catch (err: unknown) {
+      console.error(err);
+      const msg = err instanceof Error ? err.message : 'Error occurred during upload';
+      showToast(msg);
+    } finally {
+      setIsUploading('');
+    }
   };
 
   const addToHistory = (url: string, host: string) => {
