@@ -116,30 +116,38 @@ export function parseEmojis(text: string) {
  * @param {string} apiKey - ImgBB API key
  * @returns {Promise<string>} - The direct URL of the uploaded image
  */
-export async function uploadToImgBB(image: Blob | string, apiKey: string) {
-  if (!apiKey) {
+export async function uploadToImgBB(image: Blob | string, apiKey: string): Promise<string> {
+  const trimmedKey = (apiKey || '').trim();
+  if (!trimmedKey) {
     throw new Error('ImgBB API Key is required. Please set it in Settings.');
   }
 
-  let base64Data = '';
-  if (image instanceof Blob) {
-    base64Data = (await blobToBase64(image)) as string;
-  } else if (typeof image === 'string') {
-    // If it is a dataURL, strip the prefix
-    base64Data = image.split(',')[1] || image;
-  }
+  const base64Data = await resolveBase64Image(image);
 
   const formData = new FormData();
   formData.append('image', base64Data);
 
-  const response = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
-    method: 'POST',
-    body: formData
-  });
+  const response = await fetch(
+    `https://api.imgbb.com/1/upload?key=${encodeURIComponent(trimmedKey)}`,
+    {
+      method: 'POST',
+      body: formData,
+    }
+  );
 
-  const result = await response.json();
-  if (!response.ok || !result.success) {
-    throw new Error(result.error?.message || 'Failed to upload image to ImgBB');
+  let result: {
+    success?: boolean;
+    data?: { url?: string };
+    error?: { message?: string };
+  } | null = null;
+  try {
+    result = await response.json();
+  } catch {
+    result = null;
+  }
+
+  if (!response.ok || !result?.success || !result.data?.url) {
+    throw new Error(result?.error?.message || 'Failed to upload image to ImgBB');
   }
 
   return result.data.url;
@@ -151,41 +159,85 @@ export async function uploadToImgBB(image: Blob | string, apiKey: string) {
  * @param {string} clientId - Imgur Client ID
  * @returns {Promise<string>} - The direct URL of the uploaded image
  */
-export async function uploadToImgur(image: Blob | string, clientId: string) {
-  if (!clientId) {
+export async function uploadToImgur(image: Blob | string, clientId: string): Promise<string> {
+  const trimmedClientId = (clientId || '').trim();
+  if (!trimmedClientId) {
     throw new Error('Imgur Client ID is required. Please set it in Settings.');
   }
 
-  let base64Data = '';
-  if (image instanceof Blob) {
-    base64Data = (await blobToBase64(image)) as string;
-  } else if (typeof image === 'string') {
-    base64Data = image.split(',')[1] || image;
-  }
+  const base64Data = await resolveBase64Image(image);
 
   const response = await fetch('https://api.imgur.com/3/image', {
     method: 'POST',
     headers: {
-      Authorization: `Client-ID ${clientId}`,
-      'Content-Type': 'application/json'
+      Authorization: `Client-ID ${trimmedClientId}`,
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       image: base64Data,
-      type: 'base64'
-    })
+      type: 'base64',
+    }),
   });
 
-  const result = await response.json();
-  if (!response.ok || !result.success) {
-    throw new Error(result.data?.error || 'Failed to upload image to Imgur');
+  let result: {
+    success?: boolean;
+    data?: { link?: string; error?: string };
+  } | null = null;
+  try {
+    result = await response.json();
+  } catch {
+    result = null;
+  }
+
+  if (!response.ok || !result?.success || !result.data?.link) {
+    throw new Error(result?.data?.error || 'Failed to upload image to Imgur');
   }
 
   return result.data.link;
 }
 
 /**
- * Helper to convert Blob to base64 string
- * @param {Blob} blob 
+ * Strips any `data:...;base64,` prefix so image hosting APIs receive raw Base64.
+ * @param {string} value - Data URL, raw Base64 string, or remote URL
+ * @returns {string} - Pure Base64 payload (or preserved remote URL)
+ */
+function stripDataUrlPrefix(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.toLowerCase().startsWith('data:')) {
+    const commaIndex = trimmed.indexOf(',');
+    if (commaIndex === -1) {
+      return '';
+    }
+    return trimmed.slice(commaIndex + 1).replace(/\s+/g, '');
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  return trimmed.replace(/\s+/g, '');
+}
+
+/**
+ * Normalizes a Blob or Data URL / Base64 string into a non-empty raw Base64 payload.
+ * @param {Blob|string} image - Source image Blob or Base64 string
+ * @returns {Promise<string>} - Pure Base64 string without data URL prefix
+ */
+async function resolveBase64Image(image: Blob | string): Promise<string> {
+  const raw =
+    image instanceof Blob
+      ? await blobToBase64(image)
+      : typeof image === 'string'
+        ? image
+        : '';
+  const base64Data = stripDataUrlPrefix(raw);
+  if (!base64Data) {
+    throw new Error('Image data is empty or invalid.');
+  }
+  return base64Data;
+}
+
+/**
+ * Helper to convert Blob to pure base64 string without data URL prefix.
+ * @param {Blob} blob
  * @returns {Promise<string>}
  */
 function blobToBase64(blob: Blob): Promise<string> {
@@ -193,12 +245,13 @@ function blobToBase64(blob: Blob): Promise<string> {
     const reader = new FileReader();
     reader.onloadend = () => {
       if (typeof reader.result === 'string') {
-        resolve(reader.result);
+        // FileReader.readAsDataURL prepends `data:<mime>;base64,`, which ImgBB/Imgur reject as invalid base64.
+        resolve(stripDataUrlPrefix(reader.result));
       } else {
         reject(new Error('Failed to read blob as Base64 string'));
       }
     };
-    reader.onerror = reject;
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read blob as Base64 string'));
     reader.readAsDataURL(blob);
   });
 }
