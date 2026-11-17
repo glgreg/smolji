@@ -184,6 +184,22 @@ test.describe('Smolji Studio E2E Suite (/playground)', () => {
 
   test('configures API settings modal, uploads via mocked ImgBB, and downloads PNG sticker', async ({ page }) => {
     await page.route('https://api.imgbb.com/1/upload**', async (route) => {
+      const bodyText = route.request().postData() ?? '';
+      const match = /name="image"\r\n\r\n([^\r\n]+)/.exec(bodyText);
+      const imageValue = match?.[1] ?? '';
+
+      if (!imageValue || imageValue.startsWith('data:') || !/^[A-Za-z0-9+/=]+$/.test(imageValue)) {
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            status_code: 400,
+            error: { message: 'Invalid base64 string.' },
+          }),
+        });
+        return;
+      }
+
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
