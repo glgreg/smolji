@@ -3,7 +3,25 @@ import path from 'node:path';
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { GifWriter } from 'omggif';
 import App from '../src/App';
+
+function buildMultiFrameGifBuffer(): ArrayBuffer {
+  const buf = new Uint8Array(4096);
+  const writer = new GifWriter(buf, 4, 4, { loop: 0 });
+  writer.addFrame(0, 0, 4, 4, new Array<number>(16).fill(0), {
+    palette: [0xc23e1a, 0x000000],
+    delay: 6,
+    disposal: 2,
+  });
+  writer.addFrame(0, 0, 4, 4, new Array<number>(16).fill(0), {
+    palette: [0x10b981, 0x000000],
+    delay: 8,
+    disposal: 2,
+  });
+  const len = writer.end();
+  return buf.slice(0, len).buffer;
+}
 
 function createMock2DContext() {
   return {
@@ -13,6 +31,7 @@ function createMock2DContext() {
     translate: vi.fn(),
     rotate: vi.fn(),
     transform: vi.fn(),
+    setTransform: vi.fn(),
     beginPath: vi.fn(),
     closePath: vi.fn(),
     moveTo: vi.fn(),
@@ -29,6 +48,12 @@ function createMock2DContext() {
     drawImage: vi.fn(),
     fillText: vi.fn(),
     setLineDash: vi.fn(),
+    putImageData: vi.fn(),
+    getImageData: vi.fn((_x: number, _y: number, w: number, h: number) => ({
+      data: new Uint8ClampedArray(w * h * 4).fill(200),
+      width: w,
+      height: h,
+    })),
     createLinearGradient: vi.fn(() => ({
       addColorStop: vi.fn(),
     })),
@@ -76,6 +101,20 @@ describe('App Component (Smolji Studio)', () => {
     localStorage.clear();
     mockCtx = createMock2DContext();
 
+    if (typeof globalThis.ImageData === 'undefined') {
+      class MockImageData {
+        data: Uint8ClampedArray;
+        width: number;
+        height: number;
+        constructor(data: Uint8ClampedArray, width: number, height: number) {
+          this.data = data;
+          this.width = width;
+          this.height = height;
+        }
+      }
+      vi.stubGlobal('ImageData', MockImageData);
+    }
+
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(((contextId: string) => {
       if (contextId === '2d') {
         return mockCtx as unknown as CanvasRenderingContext2D;
@@ -103,6 +142,10 @@ describe('App Component (Smolji Studio)', () => {
       writable: true,
       value: vi.fn(() => 'blob:http://localhost/mock-object-url'),
     });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      writable: true,
+      value: vi.fn(),
+    });
 
     Object.defineProperty(globalThis, 'ClipboardItem', {
       writable: true,
@@ -115,6 +158,7 @@ describe('App Component (Smolji Studio)', () => {
     });
 
     Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
       writable: true,
       value: {
         write: vi.fn().mockResolvedValue(undefined),
@@ -126,6 +170,10 @@ describe('App Component (Smolji Studio)', () => {
       onload: (() => void) | null = null;
       onerror: (() => void) | null = null;
       crossOrigin = '';
+      naturalWidth = 320;
+      naturalHeight = 160;
+      width = 320;
+      height = 160;
       private _src = '';
       set src(val: string) {
         this._src = val;
@@ -133,6 +181,17 @@ describe('App Component (Smolji Studio)', () => {
           if (val.includes('fail')) {
             this.onerror?.();
           } else {
+            if (val.startsWith('data:image/svg+xml')) {
+              this.naturalWidth = 0;
+              this.naturalHeight = 0;
+              this.width = 0;
+              this.height = 0;
+            } else {
+              this.naturalWidth = 320;
+              this.naturalHeight = 160;
+              this.width = 320;
+              this.height = 160;
+            }
             this.onload?.();
           }
         }, 0);
@@ -521,5 +580,192 @@ describe('App Component (Smolji Studio)', () => {
     fireEvent.change(searchInput, { target: { value: 'zzznomatch999' } });
     expect(screen.getByText('No matching emojis found.')).toBeTruthy();
   });
+
+  it('supports 64px and 2048px export resolutions cleanly', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: '64px' }));
+    mockCtx.roundRect.mockClear();
+    fireEvent.click(screen.getByTitle('Download PNG sticker file'));
+    expect(mockCtx.roundRect).toHaveBeenCalledWith(0, 0, 64, 64, expect.any(Number));
+
+    fireEvent.click(screen.getByRole('button', { name: '2048px' }));
+    mockCtx.roundRect.mockClear();
+    fireEvent.click(screen.getByTitle('Download PNG sticker file'));
+    expect(mockCtx.roundRect).toHaveBeenCalledWith(0, 0, 2048, 2048, expect.any(Number));
+  });
+
+  it('imports external and clipboard images (upload, drag-drop, Ctrl+V, Paste Image, Replace Image) with full operation parity', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+      })
+    );
+
+    render(<App />);
+
+    // 1. File upload input adds image layer and exposes Image Source metadata without Style Variations
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const uploadInput = screen.getByLabelText('Upload external image files') as HTMLInputElement;
+    const pngFile = new File([pngBytes], 'hero-logo.png', { type: 'image/png' });
+    fireEvent.change(uploadInput, { target: { files: [pngFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Added image "hero-logo.png".')).toBeTruthy();
+    });
+    expect(screen.getByText('Image Source')).toBeTruthy();
+    expect(screen.getByText('320×160px')).toBeTruthy();
+    expect(screen.queryByText('Style Variations Explorer')).toBeNull();
+
+    // 2. Full operation parity on the custom image layer (flip, duplicate, sliders, reorder, visibility)
+    fireEvent.click(screen.getByTitle('Flip Horizontal'));
+    fireEvent.click(screen.getByTitle('Flip Vertical'));
+    fireEvent.click(screen.getByTitle('Duplicate active layer'));
+    expect(screen.getByText('Layer duplicated.')).toBeTruthy();
+
+    const ranges = document.querySelectorAll('input[type="range"]');
+    fireEvent.change(ranges[0], { target: { value: '1.25' } });
+    fireEvent.change(ranges[1], { target: { value: '30' } });
+    expect(screen.getByText('125%')).toBeTruthy();
+    expect(screen.getByText('30°')).toBeTruthy();
+
+    // 3. Replace active image layer with SVG file (viewBox fallback 640x320)
+    const replaceInput = screen.getByLabelText('Replace layer image file') as HTMLInputElement;
+    const svgFile = new File(['<svg viewBox="0 0 640 320"></svg>'], 'badge.svg', { type: 'image/svg+xml' });
+    fireEvent.change(replaceInput, { target: { files: [svgFile] } });
+    await waitFor(() => {
+      expect(screen.getByText('Replaced image with badge.svg.')).toBeTruthy();
+    });
+    expect(screen.getByText('640×320px')).toBeTruthy();
+
+    // 4. Drag & Drop onto studio stage
+    const stageRoot = document.querySelector('#studio-stage-canvas')?.parentElement as HTMLElement;
+    fireEvent.dragOver(stageRoot, { dataTransfer: { types: ['Files'] } });
+    expect(screen.getByText('Drop images to add layers')).toBeTruthy();
+    const droppedWebp = new File([new TextEncoder().encode('RIFF\x00\x00\x00\x00WEBP')], 'sticker.webp', {
+      type: 'image/webp',
+    });
+    fireEvent.drop(stageRoot, { dataTransfer: { files: [droppedWebp] } });
+    await waitFor(() => {
+      expect(screen.getByText('Added image "sticker.webp".')).toBeTruthy();
+    });
+
+    // 5. Global paste event with raw file AND data:image Data URL string
+    const pastedPng = new File([pngBytes], 'clip-shot.png', { type: 'image/png' });
+    const pasteFileEvent = Object.assign(new Event('paste', { bubbles: true, cancelable: true }), {
+      clipboardData: {
+        items: [{ kind: 'file', getAsFile: () => pastedPng }],
+        files: [pastedPng],
+        getData: () => '',
+      },
+    });
+    window.dispatchEvent(pasteFileEvent);
+    await waitFor(() => {
+      expect(screen.getByText('Added image "clip-shot.png".')).toBeTruthy();
+    });
+
+    const dataUrlTextEvent = Object.assign(new Event('paste', { bubbles: true, cancelable: true }), {
+      clipboardData: {
+        items: [],
+        files: [],
+        getData: (type: string) =>
+          type === 'text/plain' ? `data:image/png;base64,${Buffer.from(pngBytes).toString('base64')}` : '',
+      },
+    });
+    window.dispatchEvent(dataUrlTextEvent);
+    await waitFor(() => {
+      expect(screen.getByText('Added image "pasted-image.png".')).toBeTruthy();
+    });
+
+    // 6. Async clipboard.read() via "Paste Image" button
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      writable: true,
+      value: {
+        write: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(undefined),
+        read: vi.fn().mockResolvedValueOnce([
+          {
+            types: ['image/png'],
+            getType: async () => new Blob([pngBytes], { type: 'image/png' }),
+          },
+        ]),
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Paste Image/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Added image "clipboard-1.png".')).toBeTruthy();
+    });
+
+    // 7. Batch ZIP download preserves mixed custom images + emoji layers cleanly
+    fireEvent.click(screen.getByText('Download all Styles ZIP'));
+    await waitFor(
+      () => {
+        expect(screen.getByText('ZIP folder downloaded!')).toBeTruthy();
+      },
+      { timeout: 4000 }
+    );
+  });
+
+  it('plays animated emojis live on canvas, handles Play/Pause & tab visibility, and exports animated GIF', async () => {
+    const animatedGifBuffer = buildMultiFrameGifBuffer();
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).includes('animated-noto-color-emoji')) {
+        return {
+          ok: true,
+          arrayBuffer: async () => animatedGifBuffer,
+        };
+      }
+      return { ok: false };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    // Select 64px export size for fast deterministic quantization in jsdom
+    fireEvent.click(screen.getByRole('button', { name: '64px' }));
+
+    // Switch base layer to Animated Noto
+    const styleSelect = screen.getByRole('combobox', { name: 'Visual Style' });
+    fireEvent.click(styleSelect);
+    const styleListbox = screen.getByRole('listbox');
+    fireEvent.click(within(styleListbox).getByRole('option', { name: /^Animated Noto/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('ANIM')).toBeTruthy();
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    // Toggle Play/Pause button (accessible name stays constant; aria-pressed flips)
+    const playToggle = screen.getByRole('button', { name: 'Play canvas animation' });
+    expect(playToggle.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(playToggle);
+    expect(playToggle.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(playToggle);
+    expect(playToggle.getAttribute('aria-pressed')).toBe('true');
+
+    // Pause cleanly on visibilitychange / contentvisibilityautostatechange
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    const canvas = document.getElementById('studio-stage-canvas') as HTMLCanvasElement;
+    canvas.dispatchEvent(Object.assign(new Event('contentvisibilityautostatechange'), { skipped: true }));
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    // Export composed animation as .gif
+    fireEvent.click(screen.getByRole('button', { name: /Save GIF sticker/i }));
+    await waitFor(() => {
+      expect(screen.getByText('GIF saved!')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Save GIF sticker/i }).getAttribute('aria-disabled')).toBeNull();
+    });
+
+    const createUrlMock = URL.createObjectURL as unknown as ReturnType<typeof vi.fn>;
+    const gifBlobCall = createUrlMock.mock.calls.find(
+      ([arg]) => arg instanceof Blob && arg.type === 'image/gif'
+    );
+    expect(gifBlobCall).toBeTruthy();
+  });
 });
+
 

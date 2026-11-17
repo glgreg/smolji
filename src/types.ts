@@ -7,6 +7,11 @@ export interface Layer {
   id: string;
   type?: 'emoji' | 'image' | 'text';
   content?: string;
+  imageName?: string;
+  mimeType?: string;
+  naturalWidth?: number;
+  naturalHeight?: number;
+  isAnimated?: boolean;
   x: number;
   y: number;
   scale: number;
@@ -38,6 +43,7 @@ export interface UploadedHistory {
   date: string;
   host: string;
   url: string;
+  layerType?: 'emoji' | 'image';
 }
 
 export interface ContextMenuState {

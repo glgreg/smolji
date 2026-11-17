@@ -209,7 +209,7 @@ export function LandingSpecimen() {
 
         <div className="pt-3 border-t border-[#D8D0C3] dark:border-[#3A352F] flex items-center justify-between gap-3">
           <span className="text-xs text-[#5B534B] dark:text-[#B8AFA4]">
-            Want multi-layer stacking &amp; 1024px export?
+            Want multi-layer stacking &amp; 2048px PNG/GIF export?
           </span>
           <Link
             href="/playground"
