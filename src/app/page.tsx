@@ -32,21 +32,21 @@ const WORKFLOW_STEPS = [
     step: '01',
     title: 'Collect & Paste',
     detail:
-      'Type Discord-style :shortcodes: like :rocket: or :fire:, search keywords across the full gemoji index, or paste multi-emoji strings straight from your clipboard.',
-    note: 'Supports ZWJ sequences & flags',
+      'Type Discord-style :shortcodes: like :rocket: or :fire:, search keywords across the full gemoji index, or paste emojis and external images (PNG, JPG, GIF, WebP, SVG) straight from your clipboard.',
+    note: 'Supports ZWJ sequences, drag-drop & clipboard images',
   },
   {
     step: '02',
     title: 'Layer & Transform',
     detail:
-      'Mix glyphs from multiple emoji sets on one 512×512 artboard. Scale, rotate from the canvas handle, skew along X/Y, flip, toggle visibility, and dial in drop shadows.',
-    note: 'Full Ctrl+Z / Ctrl+Y undo history',
+      'Mix glyphs from multiple emoji sets, live animated emojis, and custom images on one 512×512 artboard. Scale, rotate, skew along X/Y, flip, toggle visibility, and dial in drop shadows.',
+    note: 'Live canvas animation & Ctrl+Z undo history',
   },
   {
     step: '03',
     title: 'Cut & Export',
     detail:
-      'Pick invisible transparency, solid ink, or risograph gradients with 0%–100% die-cut corner radii. Export 128px to 1024px PNGs, copy to clipboard, or bundle all 11 styles into a ZIP.',
+      'Pick invisible transparency, solid ink, or risograph gradients with 0%–100% die-cut corner radii. Export 64px to 2048px PNGs or animated GIFs, copy to clipboard, or bundle all 11 styles into a ZIP.',
     note: 'Zero server uploads required',
   },
 ];
@@ -65,7 +65,7 @@ const FAQ_ITEMS = [
   {
     question: 'Can I size stickers for Discord, Slack, and Telegram?',
     answer:
-      'Yes. Set the artboard background to Invisible for clean transparency, switch corner rounding between 0% and 100%, and export directly at 128px, 256px, 512px, or 1024px—or bundle every foundry style into one ZIP download.',
+      'Yes. Set the artboard background to Invisible for clean transparency, switch corner rounding between 0% and 100%, and export directly at 64px, 128px, 256px, 512px, 1024px, or 2048px as PNG or animated GIF—or bundle every foundry style into one ZIP download.',
   },
   {
     question: 'Where do my compositions and optional upload keys live?',
@@ -107,8 +107,9 @@ export default function LandingPage() {
               </h1>
 
               <p className="prose-pretty max-w-[60ch] text-base sm:text-lg text-[#5B534B] dark:text-[#B8AFA4] leading-relaxed">
-                Compose multi-layer stickers across eleven emoji foundries, adjust tilt, skew, corner
-                cuts, and ink shadows on a 512×512 artboard, and export crisp assets in one click.
+                Compose multi-layer stickers across eleven emoji foundries—including live animated
+                emojis and pasted external images—with tilt, skew, corner cuts, and ink shadows,
+                then export sharp PNGs or animated GIFs from 64px to 2048px.
               </p>
 
               <div className="flex flex-wrap items-center gap-3 pt-1">
@@ -142,7 +143,7 @@ export default function LandingPage() {
                     Output Sizes
                   </dt>
                   <dd className="font-display text-lg font-bold text-[#1B1917] dark:text-[#F4EFE6] mt-0.5">
-                    128px to 1024px PNG
+                    64px to 2048px PNG / GIF
                   </dd>
                 </div>
                 <div>
